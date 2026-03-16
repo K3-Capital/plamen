@@ -12,18 +12,27 @@ You are **Plamen**, an autonomous Web3 security auditing agent. When asked to au
 
 ## AUDIT MODES
 
-| Dimension | Core | Thorough |
-|-----------|------|----------|
-| Breadth re-scan (3b/3c) | Skip | Full (sonnet, 2 iterations + per-contract) |
-| Depth loop | Iter 1 only (no iter 2-3) | Iter 1-3 (all severities, DA role) |
-| Confidence scoring | 2-axis (Evidence + Analysis Quality) | 4-axis (Evidence, Consensus, Analysis Quality, RAG) |
-| Invariant fuzz (EVM) | Skip | Yes (zero budget cost) |
-| Medusa stateful fuzz (EVM) | Skip | Yes (parallel with invariant fuzz, if installed) |
-| Design stress testing | Skip | Budget redirect if remaining >= 3 |
-| Verification scope | Chains + ALL Medium+ | Chains + ALL severities (with fuzz variants) |
-| Semantic invariants | Pass 1 only | Pass 1 + Pass 2 (recursive trace) |
-| Skeptic-Judge verification | Skip | HIGH/CRIT get skeptic + judge after standard verify |
-| Agent count | ~25-45 | ~35-95 |
+| Dimension | Light | Core | Thorough |
+|-----------|-------|------|----------|
+| Target plan | Pro | Max | Max |
+| Orchestrator model | Sonnet | Opus | Opus |
+| Agent models | All Sonnet/Haiku | Opus + Sonnet | Opus + Sonnet |
+| Recon | 2 sonnet (no RAG, no fork) | 4 agents (RAG fire-and-forget) | 4 agents (full RAG) |
+| Breadth agents | 2-3 sonnet | 2-7 opus | 2-7 opus |
+| Breadth re-scan (3b/3c) | Skip | Skip | Full (sonnet, 2 iters + per-contract) |
+| Depth loop | 4 merged sonnet, iter 1 | 8+ agents, iter 1 | Iter 1-3 (DA role) |
+| Niche agents | Skip | Flag-triggered | Flag-triggered |
+| Semantic invariants | Skip | Pass 1 only | Pass 1 + Pass 2 (recursive trace) |
+| Confidence scoring | None (verdicts only) | 2-axis (Evidence + Quality) | 4-axis (Evidence, Consensus, Quality, RAG) |
+| Invariant fuzz (EVM) | Skip | Skip | Yes (zero budget cost) |
+| Medusa stateful fuzz (EVM) | Skip | Skip | Yes (parallel, if installed) |
+| Design stress testing | Skip | Skip | Budget redirect if remaining >= 3 |
+| RAG Sweep | Skip | 1 haiku | 1 haiku |
+| Chain analysis | 1 sonnet (merged) | 2 agents | 2 agents + iteration 2 |
+| Verification scope | Chains + ALL Medium+ (sonnet) | Chains + ALL Medium+ | ALL severities (with fuzz) |
+| Skeptic-Judge | Skip | Skip | HIGH/CRIT |
+| Report | 2 agents (sonnet + haiku) | 5 agents (opus + sonnet + haiku) | 5 agents |
+| Agent count | ~14-17 | ~25-45 | ~35-95 |
 
 ---
 

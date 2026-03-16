@@ -132,20 +132,25 @@ The workflow is fully autonomous — provide a smart contract project and option
 
 ## Audit Modes
 
-| Dimension | Core | Thorough |
-|-----------|------|----------|
-| Breadth re-scan (3b/3c) | Skip | Full (sonnet, 2 iterations + per-contract) |
-| Depth loop | Iter 1 only | Iter 1-3 (Devil's Advocate role) |
-| Confidence scoring | 2-axis (Evidence + Analysis Quality) | 4-axis (Evidence, Consensus, Quality, RAG) |
-| Invariant fuzz (EVM) | Skip | Yes (Foundry + Medusa if installed) |
-| Medusa stateful fuzz (EVM) | Skip | Yes (parallel, if installed) |
-| Design stress testing | Skip | Budget redirect if remaining >= 3 |
-| Verification scope | Chains + ALL Medium+ | Chains + ALL severities (with fuzz variants) |
-| Semantic invariants | Pass 1 only | Pass 1 + Pass 2 (recursive trace) |
-| Skeptic-Judge verification | Skip | HIGH/CRIT get adversarial re-verification |
-| Agent count | ~25-45 | ~35-95 |
+| Dimension | Light | Core | Thorough |
+|-----------|-------|------|----------|
+| **Target plan** | **Pro** | Max | Max |
+| Agent models | All Sonnet/Haiku | Opus + Sonnet | Opus + Sonnet |
+| Recon | 2 sonnet (no RAG) | 4 agents | 4 agents (full RAG) |
+| Breadth | 2-3 sonnet | 2-7 opus | 2-7 opus |
+| Re-scan (3b/3c) | Skip | Skip | Full (2 iter + per-contract) |
+| Depth loop | 4 merged sonnet, iter 1 | 8+ agents, iter 1 | Iter 1-3 (Devil's Advocate) |
+| Niche agents | Skip | Flag-triggered | Flag-triggered |
+| Semantic invariants | Skip | Pass 1 | Pass 1 + Pass 2 |
+| Confidence scoring | None (verdicts only) | 2-axis | 4-axis |
+| Invariant / Medusa fuzz | Skip | Skip | Yes (EVM) |
+| Chain analysis | 1 sonnet (merged) | 2 agents | 2 agents + iteration 2 |
+| Verification | ALL Medium+ (sonnet) | ALL Medium+ | ALL severities + fuzz |
+| Skeptic-Judge | Skip | Skip | HIGH/CRIT |
+| Report | 2 agents | 5 agents | 5 agents |
+| Agent count | **~14-17** | ~25-45 | ~35-95 |
 
-**Proven-only mode** (`--strict`): Available in both modes. Caps findings with only `[CODE-TRACE]` evidence (no executed PoC or fuzzer counterexample) at Low severity. Useful for benchmark comparisons where only mechanically proven findings should drive severity.
+**Proven-only mode** (`--strict`): Available in all modes. Caps findings with only `[CODE-TRACE]` evidence (no executed PoC or fuzzer counterexample) at Low severity. Useful for benchmark comparisons where only mechanically proven findings should drive severity.
 
 ---
 

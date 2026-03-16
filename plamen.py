@@ -96,6 +96,7 @@ NETWORKS = {
 }
 
 MODES = {
+    "light":    {"label": "Light Audit",    "agents": "14-17",    "scope": "ALL Medium+"},
     "core":     {"label": "Core Audit",     "agents": "25-45",    "scope": "ALL Medium+"},
     "thorough": {"label": "Thorough Audit", "agents": "35-95",    "scope": "ALL severities"},
     "compare":  {"label": "Compare",        "agents": "variable", "scope": "DELTA report"},
@@ -1041,41 +1042,46 @@ def estimate_cost(target: str, mode: str,
 
     # ── Pipeline stages ─────────────────────────────────────
     # (name, count, model, base_context, turns)
-    stages = [
-        # Phase 1: Recon — heavy file reading, MCP calls
-        ("Recon (opus)",     2, "opus",   PROMPT_BASE + int(src_tok * 0.8) + ARTIFACT_SMALL, 12),
-        ("Recon (sonnet)",   2, "sonnet", PROMPT_BASE + int(src_tok * 0.3) + ARTIFACT_SMALL, 10),
-        # Phase 3: Breadth — reads full source + skills + artifacts
-        ("Breadth",         bc, "opus",   PROMPT_BASE + SKILL_AVG + int(src_tok * 0.8) + ARTIFACT_LARGE, 12),
-        # Phase 4a: Inventory — reads all findings
-        ("Inventory",        1, "sonnet", PROMPT_BASE + ARTIFACT_LARGE * 2, 8),
-        # Phase 4a.5: Semantic Invariants
-        ("Sem. Invariants",  1, "sonnet", PROMPT_BASE + int(src_tok * 0.5) + ARTIFACT_SMALL, 10),
-        # Phase 4b: Depth agents (opus = heavy reasoning, sonnet = pattern matching)
-        ("Depth (opus)",     2, "opus",   PROMPT_BASE + SKILL_AVG + int(src_tok * 0.4) + ARTIFACT_LARGE, 12),
-        ("Depth (sonnet)",   2, "sonnet", PROMPT_BASE + SKILL_AVG + int(src_tok * 0.4) + ARTIFACT_LARGE, 10),
-        # Phase 4b: Scanners + Validation
-        ("Scanners",         3, "sonnet", PROMPT_BASE + int(src_tok * 0.3) + ARTIFACT_LARGE, 8),
-        ("Validation Sweep", 1, "sonnet", PROMPT_BASE + int(src_tok * 0.3) + ARTIFACT_LARGE, 8),
-        # Niche agents (up to 5 possible: EVENT, SEMANTIC_GAP, SPEC, SIGNATURE, SEMANTIC_CONSISTENCY)
-        ("Niche agents",     3, "sonnet", PROMPT_BASE + SKILL_AVG + int(src_tok * 0.3) + ARTIFACT_SMALL, 8),
-        # RAG Sweep + Scoring (haiku, mechanical)
-        ("RAG + Scoring",    3, "haiku",  PROMPT_BASE + ARTIFACT_LARGE, 6),
-        # Phase 4c: Chain Analysis
-        ("Chain Analysis",   2, "opus",   PROMPT_BASE + ARTIFACT_LARGE * 2, 8),
-        # Phase 5: Verification — reads source + writes/runs PoC
-        ("Verification",    vc, "opus",   PROMPT_BASE + SKILL_AVG + int(src_tok * 0.25) + ARTIFACT_SMALL, 14),
-        # Phase 6: Report
-        ("Report (opus)",    1, "opus",   PROMPT_BASE + ARTIFACT_LARGE * 3, 8),
-        ("Report (sonnet)",  2, "sonnet", PROMPT_BASE + ARTIFACT_LARGE * 2, 8),
-        ("Report (haiku)",   2, "haiku",  PROMPT_BASE + ARTIFACT_LARGE * 3, 6),
-    ]
-
-    # Orchestrator itself — runs throughout, accumulates context
-    # Context compression caps effective accumulation at ~30 turns even for long sessions
     orch_base = PROMPT_BASE + 15_000  # CLAUDE.md + plamen.md loaded
-    orch_turns = 25 if mode == "core" else 35  # capped: compression prevents quadratic blowup
-    stages.append(("Orchestrator", 1, "opus", orch_base, orch_turns))
+
+    if mode == "light":
+        # Light mode: all sonnet/haiku, no opus, fewer agents, merged phases
+        bc_light = min(3, max(2, bc))  # cap breadth at 3
+        est_findings_light = bc_light * 4  # fewer findings from sonnet breadth
+        vc_light = min(4, max(2, est_findings_light // 3))
+        stages = [
+            ("Recon",            2, "sonnet", PROMPT_BASE + int(src_tok * 0.5) + ARTIFACT_SMALL, 10),
+            ("Breadth",          bc_light, "sonnet", PROMPT_BASE + SKILL_AVG + int(src_tok * 0.7) + ARTIFACT_LARGE, 10),
+            ("Inventory",        1, "sonnet", PROMPT_BASE + ARTIFACT_LARGE * 2, 8),
+            ("Depth (merged)",   2, "sonnet", PROMPT_BASE + SKILL_AVG * 2 + int(src_tok * 0.4) + ARTIFACT_LARGE, 10),
+            ("Scanner+Sweep",    2, "sonnet", PROMPT_BASE + int(src_tok * 0.3) + ARTIFACT_LARGE, 8),
+            ("Chain",            1, "sonnet", PROMPT_BASE + ARTIFACT_LARGE * 2, 8),
+            ("Verification",     vc_light, "sonnet", PROMPT_BASE + SKILL_AVG + int(src_tok * 0.25) + ARTIFACT_SMALL, 12),
+            ("Report",           1, "sonnet", PROMPT_BASE + ARTIFACT_LARGE * 2, 8),
+            ("Report assembler", 1, "haiku",  PROMPT_BASE + ARTIFACT_LARGE * 2, 6),
+            ("Orchestrator",     1, "sonnet", orch_base, 20),
+        ]
+    else:
+        # Core mode (default stages — Thorough appends below)
+        stages = [
+            ("Recon (opus)",     2, "opus",   PROMPT_BASE + int(src_tok * 0.8) + ARTIFACT_SMALL, 12),
+            ("Recon (sonnet)",   2, "sonnet", PROMPT_BASE + int(src_tok * 0.3) + ARTIFACT_SMALL, 10),
+            ("Breadth",         bc, "opus",   PROMPT_BASE + SKILL_AVG + int(src_tok * 0.8) + ARTIFACT_LARGE, 12),
+            ("Inventory",        1, "sonnet", PROMPT_BASE + ARTIFACT_LARGE * 2, 8),
+            ("Sem. Invariants",  1, "sonnet", PROMPT_BASE + int(src_tok * 0.5) + ARTIFACT_SMALL, 10),
+            ("Depth (opus)",     2, "opus",   PROMPT_BASE + SKILL_AVG + int(src_tok * 0.4) + ARTIFACT_LARGE, 12),
+            ("Depth (sonnet)",   2, "sonnet", PROMPT_BASE + SKILL_AVG + int(src_tok * 0.4) + ARTIFACT_LARGE, 10),
+            ("Scanners",         3, "sonnet", PROMPT_BASE + int(src_tok * 0.3) + ARTIFACT_LARGE, 8),
+            ("Validation Sweep", 1, "sonnet", PROMPT_BASE + int(src_tok * 0.3) + ARTIFACT_LARGE, 8),
+            ("Niche agents",     3, "sonnet", PROMPT_BASE + SKILL_AVG + int(src_tok * 0.3) + ARTIFACT_SMALL, 8),
+            ("RAG + Scoring",    3, "haiku",  PROMPT_BASE + ARTIFACT_LARGE, 6),
+            ("Chain Analysis",   2, "opus",   PROMPT_BASE + ARTIFACT_LARGE * 2, 8),
+            ("Verification",    vc, "opus",   PROMPT_BASE + SKILL_AVG + int(src_tok * 0.25) + ARTIFACT_SMALL, 14),
+            ("Report (opus)",    1, "opus",   PROMPT_BASE + ARTIFACT_LARGE * 3, 8),
+            ("Report (sonnet)",  2, "sonnet", PROMPT_BASE + ARTIFACT_LARGE * 2, 8),
+            ("Report (haiku)",   2, "haiku",  PROMPT_BASE + ARTIFACT_LARGE * 3, 6),
+            ("Orchestrator",     1, "opus",   orch_base, 25),
+        ]
 
     if mode == "thorough":
         # Estimate HIGH/CRIT findings for skeptic-judge: ~40% of findings are M+, ~30% are H/C
@@ -1207,13 +1213,14 @@ def select_mode() -> str:
     return inquirer.select(
         message="Select audit mode:",
         choices=[
-            {"name": "Core       25-45 agents | ALL Medium+",       "value": "core"},
-            {"name": "Thorough   35-95 agents | ALL severities",    "value": "thorough"},
+            {"name": "Light      14-17 agents | Pro plan  | ALL Medium+",    "value": "light"},
+            {"name": "Core       25-45 agents | Max plan  | ALL Medium+",    "value": "core"},
+            {"name": "Thorough   35-95 agents | Max plan  | ALL severities", "value": "thorough"},
             Separator(),
-            {"name": "Compare    variable     | DELTA report",      "value": "compare"},
-            {"name": "Setup      install tools + build RAG DB",     "value": "setup"},
+            {"name": "Compare    variable     | DELTA report",               "value": "compare"},
+            {"name": "Setup      install tools + build RAG DB",              "value": "setup"},
         ],
-        default="core",
+        default="light",
         pointer="  >",
         style=_STYLE,
         qmark="⬡",
@@ -1578,7 +1585,7 @@ def main():
             run_setup()
             return
 
-        if arg in ("core", "thorough", "compare"):
+        if arg in ("light", "core", "thorough", "compare"):
             target = sys.argv[2] if len(sys.argv) > 2 else ""
             docs = ""
             network = ""
@@ -1632,7 +1639,7 @@ def main():
             continue
 
         # ── Core / Thorough flow ─────────────────────────────
-        if mode in ("core", "thorough"):
+        if mode in ("light", "core", "thorough"):
             if step == 1:
                 result = select_target()
                 if result[0] == _BACK:

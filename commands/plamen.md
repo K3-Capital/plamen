@@ -7,7 +7,7 @@ description: "Launch Plamen security audit pipeline. Usage: /plamen [core|thorou
 ## Step 0: Interactive Setup Wizard
 
 **Shortcut handling**: Parse `$ARGUMENTS` for pre-filled values:
-- If it contains "core" or "thorough", set `MODE` accordingly.
+- If it contains "light", "core", or "thorough", set `MODE` accordingly.
 - If it contains an absolute path (e.g., `D:\...` or `/home/...`), set `PROJECT_PATH` to that path. Otherwise use cwd.
 - If it contains `docs:` followed by a path or URL, set `DOCS_PATH` to that value and skip Step 0c.
 - If it contains `nodocs`, set `DOCS_PATH` to empty and skip Step 0c.
@@ -72,14 +72,19 @@ AskUserQuestion(questions=[{
   multiSelect: false,
   options: [
     {
+      label: "Light (Pro plan)",
+      description: "Lightweight audit — all Sonnet agents, fits Pro rate limits",
+      preview: "~14-17 agents (all Sonnet/Haiku — no Opus)\n\nPipeline:\n  Recon (2) → Breadth (2-3) → Inventory\n  → Depth (4 merged) → Chain (1)\n  → Verify ALL Medium+ → Report (2)\n\nSkips:\n  · RAG meta-buffer + fork ancestry\n  · Semantic invariants\n  · Niche agents\n  · Confidence scoring\n  · Invariant/Medusa fuzz\n\nBest for: Pro plan, codebases < 3000 lines"
+    },
+    {
       label: "Core (Recommended)",
       description: "Standard audit — verifies all Medium+ findings",
-      preview: "~25-45 agents\n\nPipeline:\n  Breadth → Inventory → Depth (iter 1)\n  → Chains → Verify ALL Medium+\n\nSkips:\n  · Breadth re-scan (3b/3c)\n  · Depth iterations 2-3\n  · Design stress testing\n  · Invariant fuzz campaign\n  · Fuzz variants in verification\n\nScoring: 2-axis (Evidence + Analysis Quality)"
+      preview: "~25-45 agents (requires Max plan)\n\nPipeline:\n  Breadth → Inventory → Depth (iter 1)\n  → Chains → Verify ALL Medium+\n\nSkips:\n  · Breadth re-scan (3b/3c)\n  · Depth iterations 2-3\n  · Design stress testing\n  · Invariant fuzz campaign\n  · Fuzz variants in verification\n\nScoring: 2-axis (Evidence + Analysis Quality)"
     },
     {
       label: "Thorough",
       description: "Deep audit — iterative depth, fuzz variants, re-scan",
-      preview: "~35-95 agents\n\nPipeline:\n  Breadth → Re-scan (2 iters) → Per-contract\n  → Inventory → Depth (1-3 iters, Devil's Advocate)\n  → Chains → Verify ALL severities (with fuzz)\n  → Skeptic-Judge for HIGH/CRIT\n\nIncludes:\n  · Breadth re-scan + per-contract analysis\n  · Invariant fuzz campaign (EVM)\n  · Medusa stateful fuzzing (EVM, if installed)\n  · Design stress testing\n  · Skeptic-Judge adversarial verification (HIGH/CRIT)\n  · Fuzz variants in verification\n  · Low/Info findings verified\n\nScoring: 4-axis (Evidence, Consensus, Quality, RAG)"
+      preview: "~35-95 agents (requires Max plan)\n\nPipeline:\n  Breadth → Re-scan (2 iters) → Per-contract\n  → Inventory → Depth (1-3 iters, Devil's Advocate)\n  → Chains → Verify ALL severities (with fuzz)\n  → Skeptic-Judge for HIGH/CRIT\n\nIncludes:\n  · Breadth re-scan + per-contract analysis\n  · Invariant fuzz campaign (EVM)\n  · Medusa stateful fuzzing (EVM, if installed)\n  · Design stress testing\n  · Skeptic-Judge adversarial verification (HIGH/CRIT)\n  · Fuzz variants in verification\n  · Low/Info findings verified\n\nScoring: 4-axis (Evidence, Consensus, Quality, RAG)"
     },
     {
       label: "Compare",
@@ -279,23 +284,35 @@ Detect the target language before anything else:
 
 ## WORKFLOW OVERVIEW
 
-> **ARCHITECTURE**: Recon (+ Fork Ancestry) → Instantiation → Parallel Breadth → Inventory (+ Side Effect Trace) → [Thorough: Re-Scan] → Semantic Invariants → Adaptive Depth Loop → Iterative Chain Analysis (+ Enabler Enumeration) → Verification → Report
+> **ARCHITECTURE**: Recon → Instantiation → Parallel Breadth → Inventory → [Core/Thorough: Semantic Invariants] → Adaptive Depth Loop → Chain Analysis → Verification → Report
 
-| Phase | Agent(s) | Output | Mode |
-|-------|----------|--------|------|
-| **Phase 1** | 1 Recon Agent | All artifacts + RAG meta-buffer + production behavior + template recommendations | Both |
-| **Phase 2** | Orchestrator | Instantiated prompts for analysis | Both |
-| **Phase 3** | N Breadth Agents (parallel) | Findings files (with preconditions/postconditions) | Both |
-| **Phase 3b** | Breadth Re-Scan (sonnet, 2-3 agents, max 2 iterations) + Per-Contract Analysis | New findings masked by attention saturation | Thorough only |
-| **Phase 4a** | Inventory Agent (+ side effect trace audit) | Findings inventory, side effect traces, static analysis promotions, REFUTED list, gate status | Both |
-| **Phase 4a.5** | Semantic Invariant Agent (sonnet) | `semantic_invariants.md` — write-site lists + semantic invariants + annotations | Both (Pass 1 only in Core; Pass 1+2 in Thorough) |
-| **Phase 4b** | Adaptive Depth Loop | Deep analysis + confidence scores + targeted re-analysis | Both (scope differs by mode) |
-| **Phase 4c** | Iterative Chain Analysis (1-2 iterations) | Enabler paths + grouped hypotheses + chain hypotheses | Both |
-| **Phase 5** | Verifiers (parallel) | PoC tests | Both (scope differs by mode) |
-| **Phase 6a** | Index Agent (haiku) | Report index with clean IDs + tier assignments | Both |
-| **Phase 6a.1** | Orchestrator inline | Completeness assert | Both |
-| **Phase 6b** | 3 Tier Writers (parallel: opus C+H, sonnet M, sonnet L+I) | Finding sections per severity tier | Both |
-| **Phase 6c** | Assembler Agent (haiku/sonnet) | Final AUDIT_REPORT.md | Both |
+| Phase | Agent(s) | Output | Light | Core | Thorough |
+|-------|----------|--------|-------|------|----------|
+| **Phase 1** | Recon Agent(s) | Artifacts + templates | 2 sonnet (no RAG/fork) | 4 agents | 4 agents |
+| **Phase 2** | Orchestrator | Instantiated prompts | All | All | All |
+| **Phase 3** | Breadth Agents | Findings files | 2-3 sonnet | 2-7 opus | 2-7 opus |
+| **Phase 3b** | Re-Scan + Per-Contract | Masked findings | Skip | Skip | Thorough only |
+| **Phase 4a** | Inventory Agent | Findings inventory | 1 sonnet | 1 sonnet | 1 sonnet |
+| **Phase 4a.5** | Semantic Invariant Agent | Write-sites + invariants | Skip | Pass 1 | Pass 1+2 |
+| **Phase 4b** | Depth Loop | Deep analysis | 4 merged sonnet, no scoring | 8+ agents, 2-axis scoring | 8+ agents, 4-axis scoring |
+| **Phase 4c** | Chain Analysis | Hypotheses + chains | 1 sonnet (merged) | 2 agents | 2 agents + iter 2 |
+| **Phase 5** | Verifiers | PoC tests | ALL Medium+ (sonnet) | ALL Medium+ | ALL severities + fuzz |
+| **Phase 5.1** | Skeptic-Judge | Adversarial re-verify | Skip | Skip | HIGH/CRIT |
+| **Phase 6** | Report pipeline | AUDIT_REPORT.md | 2 agents (sonnet+haiku) | 5 agents | 5 agents |
+
+### Light Mode Orchestration
+
+When `MODE == light`, the orchestrator applies these overrides:
+
+1. **All agents use Sonnet or Haiku** — no Opus spawns. Use `model="sonnet"` for all analysis/verification agents, `model="haiku"` for assembler only.
+2. **Recon**: Spawn 2 sonnet agents (not 4). Agent L1 = build + static analysis + tests (Tasks 1,2,8,9). Agent L2 = docs + patterns + surface + templates (Tasks 3,4,5,6,7,10). Skip RAG meta-buffer (Task 0) and fork ancestry entirely.
+3. **Breadth**: Cap at 2-3 sonnet agents (not 2-7 opus). Use same merge hierarchy.
+4. **Semantic Invariants**: Skip entirely. Depth agents read `state_variables.md` directly.
+5. **Depth Loop**: Spawn 4 merged sonnet agents — (a) combined token-flow + state-trace, (b) combined edge-case + external, (c) combined scanner A+B+C, (d) validation sweep. No niche agents, no injectable investigation agents. Iteration 1 only, no confidence scoring.
+6. **Chain Analysis**: Single sonnet agent performs both enabler enumeration and chain matching in one pass.
+7. **Verification**: ALL Medium+ (same scope as Core), but all verifiers are sonnet.
+8. **Report**: 1 sonnet writer (all tiers) + 1 haiku assembler. No separate index agent — writer handles ID assignment inline.
+9. **Report disclaimer**: Include at the top of the report: *"This audit was performed in Light mode (all Sonnet agents). For maximum coverage, use Core or Thorough mode with a Max plan."*
 
 ---
 
@@ -419,7 +436,7 @@ After all return:
 
 ### Phase 3b: Breadth Re-Scan (THOROUGH mode only)
 
-**Skip entirely in Core mode.**
+**Skip in Light and Core mode.**
 
 **Read full prompt from**: `~/.claude/rules/phase3b-rescan-prompt.md`
 
@@ -451,6 +468,8 @@ After all return:
 - **VIOLATION**: Proceeding past BLOCKED gate without resolution
 
 ### Phase 4a.5: Semantic Invariant Pre-Computation
+
+> **Skip in Light mode.** Depth agents read `state_variables.md` directly.
 
 > **Purpose**: Enumerate write sites, define semantic invariants, group variables into semantic clusters. Pass 2 (Thorough only) reverses direction for function→cluster coverage and recursive stale-read traces.
 > **Models**: Pass 1 sonnet, Pass 2 sonnet (sequential)
@@ -616,7 +635,7 @@ After ALL standard Phase 5 verifiers complete:
 4. If skeptic DISAGREES → spawn haiku judge ("prove it or lose it" — stronger mechanical evidence wins)
 5. Apply final verdict per the ruling table in the verification prompt
 
-**Skip entirely in Core mode.**
+**Skip in Light and Core mode.**
 
 ### Phase 5.5: Post-Verification Finding Extraction
 
