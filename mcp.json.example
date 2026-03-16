@@ -1,0 +1,64 @@
+{
+  "mcpServers": {
+    "slither-analyzer": {
+      "command": "slither-mcp",
+      "args": [],
+      "_comment": "Install: pip install slither-mcp (or use full path to slither-mcp executable)"
+    },
+    "solana-fender": {
+      "command": "python",
+      "args": ["-m", "solana_fender_mcp"],
+      "cwd": "./custom-mcp/solana-fender",
+      "_comment": "Optional: Solana program security analysis"
+    },
+    "unified-vuln-db": {
+      "command": "python",
+      "args": ["-m", "unified_vuln.server"],
+      "cwd": "./custom-mcp/unified-vuln-db",
+      "_comment": "Required: RAG vulnerability database. Run 'python -m unified_vuln.indexer index' to populate"
+    },
+    "farofino": {
+      "command": "python",
+      "args": ["-m", "farofino_mcp"],
+      "cwd": "./custom-mcp/farofino-mcp",
+      "_comment": "Optional: Solidity static analysis fallback"
+    },
+    "foundry-suite": {
+      "command": "npx",
+      "args": ["-y", "@pranesh.asp/foundry-mcp-server"],
+      "env": {
+        "RPC_URL": "YOUR_RPC_URL"
+      },
+      "_comment": "Optional: EVM fork testing. Get RPC from Alchemy/Infura/public endpoints"
+    },
+    "evm-chain-data": {
+      "command": "npx",
+      "args": ["-y", "@mcpdotdirect/evm-mcp-server"],
+      "env": {
+        "ETHERSCAN_API_KEY": "YOUR_ETHERSCAN_API_KEY"
+      },
+      "_comment": "Optional: On-chain contract verification. Free key: https://etherscan.io/apis"
+    },
+    "tavily-search": {
+      "command": "npx",
+      "args": ["-y", "tavily-mcp"],
+      "env": {
+        "TAVILY_API_KEY": "YOUR_TAVILY_API_KEY"
+      },
+      "_comment": "Optional: Web search for fork ancestry + doc lookup. Key: https://tavily.com"
+    },
+    "memory": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "_comment": "Optional: Persistent memory across sessions"
+    },
+    "helius": {
+      "command": "npx",
+      "args": ["-y", "helius-mcp@latest"],
+      "env": {
+        "HELIUS_API_KEY": "YOUR_HELIUS_API_KEY"
+      },
+      "_comment": "Optional: Solana on-chain data. Free key: https://helius.dev"
+    }
+  }
+}

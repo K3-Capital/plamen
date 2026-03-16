@@ -1,0 +1,69 @@
+# ── Credentials & secrets ─────────────────────────
+.credentials.json
+*.env
+.env.*
+
+# ── User-specific config (use .example templates) ─
+mcp.json
+settings.json
+
+# ── Session / transient data ─────────────────────
+history.jsonl
+cache/
+debug/
+backups/
+downloads/
+file-history/
+paste-cache/
+shell-snapshots/
+todos/
+telemetry/
+memory/
+plans/
+tasks/
+plugins/
+projects/
+sessions/
+
+# ── MCP server data (rebuilt via indexers) ────────
+custom-mcp/unified-vuln-db/data/
+custom-mcp/unified-vuln-db/*.egg-info/
+custom-mcp/defihacklabs-rag/data/
+custom-mcp/solodit-scraper/data/
+**/chroma_db/
+**/DeFiHackLabs/
+**/immunefi_cache/
+**/solodit_cache/
+
+# ── Python ────────────────────────────────────────
+**/__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+**/.venv*/
+
+# ── Node ──────────────────────────────────────────
+**/node_modules/
+
+# ── Auth cache ────────────────────────────────────
+mcp-needs-auth-cache.json
+
+# ── OS files ──────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDE ───────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Nested git repos (submodules have their own) ─
+**/.git_bak/
+.git_old/
+
+# ── Scripts (dev-only banner experiments) ─────────
+scripts/

@@ -1,0 +1,6 @@
+[submodule "custom-mcp/farofino-mcp"]
+	path = custom-mcp/farofino-mcp
+	url = https://github.com/italoag/farofino-mcp
+[submodule "custom-mcp/slither-mcp"]
+	path = custom-mcp/slither-mcp
+	url = https://github.com/trailofbits/slither-mcp

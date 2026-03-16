@@ -1,0 +1,29 @@
+# Core
+mcp>=1.0.0
+chromadb>=0.4.0
+pydantic>=2.0.0
+
+# Embeddings - Code Aware (priority order)
+sentence-transformers>=2.2.0  # For Nomic/CodeBERT/MiniLM
+# voyageai>=0.2.0  # Optional: uncomment if you have VOYAGE_API_KEY
+
+# Data fetching
+httpx>=0.24.0
+aiofiles>=23.0.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+datasets>=2.14.0  # For HuggingFace
+
+# Rate limiting & retry
+tenacity>=8.2.0
+ratelimit>=2.2.0
+
+# Utils
+anyio>=4.0.0
+click>=8.1.0
+rich>=13.0.0
+python-dotenv>=1.0.0
+
+# Optional: Better embeddings
+# torch>=2.0.0  # Required for sentence-transformers
+# transformers>=4.30.0  # Required for Nomic
