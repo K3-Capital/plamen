@@ -28,7 +28,8 @@ pip install -r ~/.claude/custom-mcp/unified-vuln-db/requirements.txt
 pip install -r ~/.claude/custom-mcp/solodit-scraper/requirements.txt
 pip install -r ~/.claude/custom-mcp/defihacklabs-rag/requirements.txt
 pip install -e ~/.claude/custom-mcp/solana-fender
-pip install -e ~/.claude/custom-mcp/slither-mcp
+pip install -r ~/.claude/custom-mcp/farofino-mcp/requirements.txt
+pip install -e ~/.claude/custom-mcp/slither-mcp  # EVM only — skip if not auditing Solidity
 ```
 
 ## Step 3: Configure MCP servers
