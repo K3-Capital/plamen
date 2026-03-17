@@ -10,11 +10,11 @@ Built for **Claude Opus 4.6** (1M context). Works on **Max** (Core/Thorough) and
 
 ## Quick Start
 
-> **Windows users**: All commands below use Unix shell syntax. Use **Git Bash** (installed with [Git for Windows](https://git-scm.com)) to run them. PowerShell and cmd.exe do not support `~`, `cp`, or pipe syntax used here.
+> **Shell**: All commands use Unix syntax. On **Windows**, use **Git Bash** (included with [Git for Windows](https://git-scm.com)). On **macOS/Linux**, use your regular terminal. If `pip`/`python` don't work, try `pip3`/`python3` instead.
 
-> **Existing Claude Code users**: If `~/.claude` already exists, back it up first:
+> **Existing Claude Code users**: `~/.claude` will be overwritten. Back it up first:
 > ```bash
-> mv ~/.claude ~/.claude.backup    # Unix/macOS/Git Bash
+> mv ~/.claude ~/.claude.backup
 > ```
 
 ```bash
@@ -33,8 +33,10 @@ pip install -r custom-mcp/unified-vuln-db/requirements.txt
 pip install -r custom-mcp/solodit-scraper/requirements.txt
 pip install -r custom-mcp/defihacklabs-rag/requirements.txt
 pip install -e custom-mcp/solana-fender
-pip install -e custom-mcp/slither-mcp
 pip install -r custom-mcp/farofino-mcp/requirements.txt
+
+# 4b. EVM users only — install slither MCP (requires Python 3.11+, solc)
+pip install -e custom-mcp/slither-mcp    # skip if not auditing Solidity
 
 # 5. Build the RAG vulnerability database (~5 min, requires internet)
 cd custom-mcp/unified-vuln-db
@@ -435,8 +437,10 @@ pip install -r custom-mcp/unified-vuln-db/requirements.txt
 pip install -r custom-mcp/solodit-scraper/requirements.txt
 pip install -r custom-mcp/defihacklabs-rag/requirements.txt
 pip install -e custom-mcp/solana-fender
-pip install -e custom-mcp/slither-mcp
 pip install -r custom-mcp/farofino-mcp/requirements.txt
+
+# EVM users only (requires Python 3.11+, solc)
+pip install -e custom-mcp/slither-mcp
 ```
 
 ### 3. Configure MCP servers
