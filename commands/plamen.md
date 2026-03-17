@@ -33,7 +33,7 @@ First, output the banner as text (no tool calls):
 ╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚═╝  ╚═══╝
 ```
 
-**Web3 Security Auditor** v1.0
+**Web3 Security Auditor** v1.0.0
 
 Then run a quick toolchain probe (via Bash, all in one command):
 
@@ -470,6 +470,7 @@ After all return:
 ### Phase 4a.5: Semantic Invariant Pre-Computation
 
 > **Skip in Light mode.** Depth agents read `state_variables.md` directly.
+> **Timeout fallback**: If the semantic invariant agent times out or fails, proceed to Phase 4b without `semantic_invariants.md`. Depth agents fall back to reading `state_variables.md` directly (same as Light mode). Log: "Phase 4a.5 TIMEOUT — depth agents using state_variables.md fallback."
 
 > **Purpose**: Enumerate write sites, define semantic invariants, group variables into semantic clusters. Pass 2 (Thorough only) reverses direction for function→cluster coverage and recursive stale-read traces.
 > **Models**: Pass 1 sonnet, Pass 2 sonnet (sequential)

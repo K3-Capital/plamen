@@ -7,7 +7,7 @@ tools:
   - Read
   - Write
   - Grep
-  - Shell
+  - Bash
   - mcp__slither-analyzer__get_function_source
   - mcp__solana-fender__security_check_program
   - mcp__solana-fender__security_check_file

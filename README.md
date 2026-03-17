@@ -1,6 +1,6 @@
 # Plamen — Web3 Security Auditor for Claude Code
 
-An autonomous smart contract security audit agent for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Orchestrates **25–95 specialized AI agents** across **8 phases** to produce comprehensive security audit reports — from reconnaissance to verified PoC exploits.
+An autonomous smart contract security audit agent for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Orchestrates **15–95 specialized AI agents** across **8 phases** to produce comprehensive security audit reports — from reconnaissance to verified PoC exploits.
 
 Supports **EVM/Solidity**, **Solana/Anchor**, **Aptos Move**, and **Sui Move** via a tree architecture with shared rules and language-specific analysis branches.
 
@@ -11,7 +11,7 @@ Built for **Claude Opus 4.6** (1M context) with a Max subscription.
 ## Quick Start
 
 ```bash
-# 1. Clone
+# 1. Clone (back up existing ~/.claude first if you have one)
 git clone https://github.com/PlamenTSV/plamen.git ~/.claude
 cd ~/.claude
 
@@ -29,9 +29,11 @@ pip install -e custom-mcp/solana-fender
 pip install -e custom-mcp/slither-mcp
 
 # 5. Build the RAG vulnerability database
+cd custom-mcp/unified-vuln-db
 python -m unified_vuln.indexer index -s solodit --max-pages 10
 python -m unified_vuln.indexer index -s defihacklabs
 python -m unified_vuln.indexer index -s immunefi
+cd ../..
 
 # 6. Configure MCP servers
 cp mcp.json.example mcp.json
@@ -143,6 +145,7 @@ The workflow is fully autonomous — provide a smart contract project and option
 | Niche agents | Skip | Flag-triggered | Flag-triggered |
 | Semantic invariants | Skip (state consistency tradeoff) | Pass 1 | Pass 1 + Pass 2 |
 | Confidence scoring | None (verdicts only) | 2-axis | 4-axis |
+| RAG Sweep | Skip | 1 haiku | 1 haiku |
 | Invariant / Medusa fuzz | Skip | Skip | Yes (EVM) |
 | Chain analysis | 1 sonnet (merged) | 2 agents | 2 agents + iteration 2 |
 | Verification | ALL Medium+ (sonnet) | ALL Medium+ | ALL severities + fuzz |
@@ -150,7 +153,7 @@ The workflow is fully autonomous — provide a smart contract project and option
 | Report | 2 agents | 5 agents | 5 agents |
 | Agent count | **~15-18** | ~25-45 | ~35-95 |
 
-**Proven-only mode** (`--strict`): Available in all modes. Caps findings with only `[CODE-TRACE]` evidence (no executed PoC or fuzzer counterexample) at Low severity. Useful for benchmark comparisons where only mechanically proven findings should drive severity.
+**Proven-only mode** (`--proven-only`): Available in all modes. Caps findings with only `[CODE-TRACE]` evidence (no executed PoC or fuzzer counterexample) at Low severity. Useful for benchmark comparisons where only mechanically proven findings should drive severity.
 
 ---
 
@@ -381,7 +384,7 @@ Plamen uses 9 MCP servers. 4 are bundled in `custom-mcp/`, 2 are git submodules,
 
 | Tool | Purpose | Install |
 |------|---------|---------|
-| Solana CLI | Toolchain, account dumps | [docs.solanalabs.com](https://docs.solanalabs.com/cli/install) |
+| Solana CLI | Toolchain, account dumps | [docs.anza.xyz](https://docs.anza.xyz/cli/install) |
 | Anchor | Build Anchor programs | `avm install latest && avm use latest` |
 | Trident | Stateful fuzzing | `cargo install trident-cli` |
 
@@ -389,13 +392,13 @@ Plamen uses 9 MCP servers. 4 are bundled in `custom-mcp/`, 2 are git submodules,
 
 | Tool | Purpose | Install |
 |------|---------|---------|
-| Aptos CLI | Build, test, prove | [aptos.dev/tools/aptos-cli](https://aptos.dev/tools/aptos-cli) |
+| Aptos CLI | Build, test, prove | [aptos.dev/build/cli](https://aptos.dev/build/cli) |
 
 **Sui Move:**
 
 | Tool | Purpose | Install |
 |------|---------|---------|
-| Sui CLI | Build, test | [docs.sui.io/build/install](https://docs.sui.io/build/install) |
+| Sui CLI | Build, test | [docs.sui.io](https://docs.sui.io/guides/developer/getting-started/sui-install) |
 
 ---
 
@@ -461,37 +464,37 @@ The startup screen runs a dependency check showing which tools are available.
 
 Copy `mcp.json.example` to `mcp.json` and configure:
 
-```jsonc
+```json
 {
   "mcpServers": {
     "slither-analyzer": {
-      "command": "slither-mcp",        // or full path to slither-mcp executable
+      "command": "slither-mcp",
       "args": []
     },
     "unified-vuln-db": {
       "command": "python",
       "args": ["-m", "unified_vuln.server"],
-      "cwd": "./custom-mcp/unified-vuln-db"  // relative to ~/.claude
+      "cwd": "./custom-mcp/unified-vuln-db"
     },
     "foundry-suite": {
       "command": "npx",
       "args": ["-y", "@pranesh.asp/foundry-mcp-server"],
-      "env": { "RPC_URL": "https://eth.llamarpc.com" }  // or your Alchemy/Infura URL
+      "env": { "RPC_URL": "https://eth.llamarpc.com" }
     },
     "evm-chain-data": {
       "command": "npx",
       "args": ["-y", "@mcpdotdirect/evm-mcp-server"],
-      "env": { "ETHERSCAN_API_KEY": "YOUR_KEY" }  // free: https://etherscan.io/apis
+      "env": { "ETHERSCAN_API_KEY": "YOUR_KEY" }
     },
     "tavily-search": {
       "command": "npx",
       "args": ["-y", "tavily-mcp"],
-      "env": { "TAVILY_API_KEY": "YOUR_KEY" }  // free: https://tavily.com
+      "env": { "TAVILY_API_KEY": "YOUR_KEY" }
     },
     "helius": {
       "command": "npx",
       "args": ["-y", "helius-mcp@latest"],
-      "env": { "HELIUS_API_KEY": "YOUR_KEY" }  // free: https://helius.dev
+      "env": { "HELIUS_API_KEY": "YOUR_KEY" }
     }
   }
 }
@@ -614,7 +617,7 @@ plamen.bat                          # Windows
 
 ```bash
 plamen core /path/to/project --docs whitepaper.pdf
-plamen thorough /path/to/project --scope scope.txt --network ethereum --strict
+plamen thorough /path/to/project --scope scope.txt --network ethereum --proven-only
 plamen setup                        # just run the installer
 ```
 

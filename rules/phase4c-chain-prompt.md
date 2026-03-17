@@ -121,7 +121,7 @@ Read:
 - {SCRATCHPAD}/hypotheses.md (grouped hypotheses from Agent 1)
 - {SCRATCHPAD}/finding_mapping.md (finding → hypothesis mapping from Agent 1)
 - {SCRATCHPAD}/enabler_results.md (enabler enumeration + cross-state interactions from Agent 1)
-- {SCRATCHPAD}/variable_finding_map.md (variable→finding cross-reference for variable-level matching)
+- {SCRATCHPAD}/variable_finding_map.md (variable→finding cross-reference for variable-level matching — if missing, fall back to grep-based variable name matching in findings_inventory.md)
 - {SCRATCHPAD}/findings_inventory.md (for full finding details when needed)
 
 For specific chain candidates, read the relevant source files directly.

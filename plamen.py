@@ -154,7 +154,7 @@ def _box_row(w, bx: str, W: int, content: str, right: str = ""):
 
 def _probe_rag_db() -> int:
     """Return the number of entries in the RAG vulnerability database, or -1 if not found."""
-    db_path = os.path.expanduser("~/.claude/unified-vuln-db/data/chroma_db/chroma.sqlite3")
+    db_path = os.path.expanduser("~/.claude/custom-mcp/unified-vuln-db/data/chroma_db/chroma.sqlite3")
     if not os.path.isfile(db_path):
         return -1
     try:
@@ -1632,7 +1632,7 @@ def main():
                     scope_file = sys.argv[i + 1]
                 if a == "--notes" and i + 1 < len(sys.argv):
                     scope_notes = sys.argv[i + 1]
-                if a == "--strict":
+                if a in ("--proven-only", "--strict"):
                     strict = True
             if not target and arg != "compare":
                 show_banner()
