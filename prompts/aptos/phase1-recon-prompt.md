@@ -384,6 +384,8 @@ SCRATCHPAD: {scratchpad}
 
 ## TASK 1: Build Environment
 
+> **PATH note**: On Windows, `aptos` may not be in Claude Code's default PATH. Prefix Bash calls with: `export PATH="$HOME/.aptoscli/bin:$PATH" &&` if not found on first attempt.
+
 1. Check for Move.toml (package manifest), look for multiple Move.toml files (workspace with sub-packages)
 2. Read Move.toml for:
    - Package name and version

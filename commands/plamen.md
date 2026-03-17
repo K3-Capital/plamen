@@ -38,10 +38,11 @@ First, output the banner as text (no tool calls):
 Then run a quick toolchain probe (via Bash, all in one command):
 
 ```bash
+export PATH="$HOME/.foundry/bin:$HOME/.local/share/solana/install/active_release/bin:$HOME/.avm/bin:$HOME/.cargo/bin:$HOME/.aptoscli/bin:$HOME/.local/bin:$HOME/go/bin:$PATH" && \
 echo "Toolchain:" && \
 echo -n "  Required: " && \
 (command -v claude >/dev/null 2>&1 && echo -n "✓claude " || echo -n "✗claude ") && \
-(command -v python >/dev/null 2>&1 && echo -n "✓python " || echo -n "✗python ") && \
+(command -v python >/dev/null 2>&1 && echo -n "✓python " || (command -v python3 >/dev/null 2>&1 && echo -n "✓python " || echo -n "✗python ")) && \
 (command -v npx >/dev/null 2>&1 && echo -n "✓npx " || echo -n "✗npx ") && \
 (command -v git >/dev/null 2>&1 && echo -n "✓git" || echo -n "✗git") && echo "" && \
 echo -n "  EVM:      " && \

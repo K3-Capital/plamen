@@ -271,6 +271,8 @@ SCRATCHPAD: {scratchpad}
 
 ## TASK 1: Build Environment
 
+> **PATH note**: On Windows, `sui` may not be in Claude Code's default PATH. Prefix Bash calls with: `export PATH="$HOME/.local/bin:$PATH" &&` if not found on first attempt.
+
 1. Check for Move.toml (primary manifest for Sui Move packages)
 1b. Verify toolchain availability before building:
    - `sui --version` or `sui client --version` -- if missing, document as TOOLCHAIN WARNING

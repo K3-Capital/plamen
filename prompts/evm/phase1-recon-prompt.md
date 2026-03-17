@@ -114,6 +114,9 @@ Use this output format:
 ```
 
 ## TASK 1: Build Environment
+
+> **PATH note**: On Windows, `forge`/`anvil`/`cast` may not be in Claude Code's default PATH. Prefix Bash calls with: `export PATH="$HOME/.foundry/bin:$HOME/.cargo/bin:$PATH" &&` if `forge` is not found on first attempt.
+
 1. Check for foundry.toml or hardhat.config.js
 2. If Hardhat only: create minimal foundry.toml scaffold
 3. Run `npm install` or `yarn` if needed

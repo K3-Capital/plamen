@@ -228,6 +228,8 @@ SCRATCHPAD: {scratchpad}
 
 ## TASK 1: Build Environment
 
+> **PATH note**: On Windows, `solana`/`anchor`/`cargo-build-sbf` may not be in Claude Code's default PATH. Prefix Bash calls with: `export PATH="$HOME/.local/share/solana/install/active_release/bin:$HOME/.avm/bin:$HOME/.cargo/bin:$PATH" &&` if not found on first attempt.
+
 1. Check for Anchor.toml, Cargo.toml, package.json
 1b. Verify toolchain availability before building:
    - `solana --version` — if missing, document as TOOLCHAIN WARNING
