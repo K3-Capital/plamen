@@ -1,2 +1,3 @@
 #!/usr/bin/env bash
-python3 "$HOME/.claude/plamen.py" "$@"
+PYTHON=$(command -v python3 || command -v python)
+exec "$PYTHON" "$HOME/.claude/plamen.py" "$@"

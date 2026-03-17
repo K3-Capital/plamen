@@ -4,14 +4,21 @@ An autonomous smart contract security audit agent for [Claude Code](https://docs
 
 Supports **EVM/Solidity**, **Solana/Anchor**, **Aptos Move**, and **Sui Move** via a tree architecture with shared rules and language-specific analysis branches.
 
-Built for **Claude Opus 4.6** (1M context) with a Max subscription.
+Built for **Claude Opus 4.6** (1M context). Works on **Max** (Core/Thorough) and **Pro** (Light mode) subscriptions.
 
 ---
 
 ## Quick Start
 
+> **Windows users**: All commands below use Unix shell syntax. Use **Git Bash** (installed with [Git for Windows](https://git-scm.com)) to run them. PowerShell and cmd.exe do not support `~`, `cp`, or pipe syntax used here.
+
+> **Existing Claude Code users**: If `~/.claude` already exists, back it up first:
+> ```bash
+> mv ~/.claude ~/.claude.backup    # Unix/macOS/Git Bash
+> ```
+
 ```bash
-# 1. Clone (back up existing ~/.claude first if you have one)
+# 1. Clone
 git clone https://github.com/PlamenTSV/plamen.git ~/.claude
 cd ~/.claude
 
@@ -21,14 +28,15 @@ git submodule update --init --recursive
 # 3. Install Python deps
 pip install -r requirements.txt
 
-# 4. Install MCP server deps
+# 4. Install MCP server deps (~2GB download — includes PyTorch for embeddings)
 pip install -r custom-mcp/unified-vuln-db/requirements.txt
 pip install -r custom-mcp/solodit-scraper/requirements.txt
 pip install -r custom-mcp/defihacklabs-rag/requirements.txt
 pip install -e custom-mcp/solana-fender
 pip install -e custom-mcp/slither-mcp
+pip install -r custom-mcp/farofino-mcp/requirements.txt
 
-# 5. Build the RAG vulnerability database
+# 5. Build the RAG vulnerability database (~5 min, requires internet)
 cd custom-mcp/unified-vuln-db
 python -m unified_vuln.indexer index -s solodit --max-pages 10
 python -m unified_vuln.indexer index -s defihacklabs
@@ -47,6 +55,8 @@ python plamen.py
 # Or from Claude Code: /plamen
 # Or add ~/.claude to PATH and just type: plamen
 ```
+
+You'll need a smart contract project to audit (e.g., a Foundry or Hardhat project). The Setup menu inside the wrapper can install chain-specific tools (Foundry, Solana, Aptos, Sui) for you.
 
 > **Having trouble?** Open Claude Code and paste the contents of [`SETUP.md`](SETUP.md) — it contains step-by-step instructions that Claude Code can follow to install everything for you automatically.
 
@@ -366,7 +376,7 @@ Plamen uses 9 MCP servers. 4 are bundled in `custom-mcp/`, 2 are git submodules,
 | Tool | Purpose | Install |
 |------|---------|---------|
 | **Claude Code CLI** | The AI runtime | [docs.anthropic.com](https://docs.anthropic.com/en/docs/claude-code) |
-| **Python 3.10+** | MCP servers, plamen.py wrapper | [python.org](https://python.org) |
+| **Python 3.11+** | MCP servers, plamen.py wrapper | [python.org](https://python.org) |
 | **Node.js 18+** / **npx** | npm MCP servers (foundry-suite, tavily, etc.) | [nodejs.org](https://nodejs.org) |
 | **Git** | Dependency resolution, submodules | [git-scm.com](https://git-scm.com) |
 
@@ -420,12 +430,13 @@ git submodule update --init --recursive
 # Plamen wrapper
 pip install -r requirements.txt
 
-# MCP servers
+# MCP servers (~2GB download — includes PyTorch for embeddings)
 pip install -r custom-mcp/unified-vuln-db/requirements.txt
 pip install -r custom-mcp/solodit-scraper/requirements.txt
 pip install -r custom-mcp/defihacklabs-rag/requirements.txt
 pip install -e custom-mcp/solana-fender
 pip install -e custom-mcp/slither-mcp
+pip install -r custom-mcp/farofino-mcp/requirements.txt
 ```
 
 ### 3. Configure MCP servers
@@ -511,7 +522,7 @@ Copy `mcp.json.example` to `mcp.json` and configure:
 | Helius | [helius.dev](https://helius.dev) | Free tier | Solana on-chain data |
 | RPC URL | Alchemy, Infura, or public | Free/Paid | Fork testing |
 
-All keys are optional. The pipeline degrades gracefully — missing keys mean reduced coverage, not failure.
+All keys are optional. The pipeline degrades gracefully — missing keys mean reduced coverage, not failure. You can leave `YOUR_*` placeholders in `mcp.json` and the pipeline will skip those services.
 
 ---
 
@@ -788,8 +799,8 @@ Findings carry evidence tags that determine confidence scoring:
 | `[MEDUSA-PASS]` | 1.0 | Medusa fuzzer found counterexample |
 | `[POC-PASS]` | 1.0 | PoC compiled, executed, assertions passed |
 | `[POC-FAIL]` | — | PoC executed but assertions failed |
-| `[CODE-TRACE]` | 0.8 | Manual trace with concrete values (no execution) |
 | `[CODE]` | 0.8 | Code-level evidence with specific locations |
+| `[CODE-TRACE]` | 0.6 | Manual trace with concrete values, no execution (caps at CONTESTED without real constants) |
 | `[DOC]` | 0.4 | Documentation-based evidence |
 | `[MOCK]` | 0.2 | Mock-based (not production-representative) |
 

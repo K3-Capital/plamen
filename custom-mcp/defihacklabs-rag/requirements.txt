@@ -13,8 +13,7 @@ openai>=1.0.0
 # Option 2: Local embeddings (no API key needed)
 sentence-transformers>=2.2.0
 
-# File parsing
-pathlib>=1.0.1
+# File parsing (pathlib is stdlib since Python 3.4, no pip install needed)
 
 # Async utilities
 anyio>=4.0.0
