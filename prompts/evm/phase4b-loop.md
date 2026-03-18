@@ -58,21 +58,28 @@ ADAPTIVE_DEPTH_LOOP(findings_inventory):
   // Graceful degradation: if medusa not installed, skip silently (log MEDUSA_UNAVAILABLE).
   if MEDUSA_AVAILABLE and MODE == thorough and LANGUAGE == evm:
     spawn medusa_campaign_agent(model="sonnet", prompt="
-      You are the Medusa Fuzz Campaign Agent. You generate and run Medusa-specific invariant tests.
+      You are the Medusa Fuzz Campaign Agent. You derive protocol-specific invariants and run Medusa stateful fuzzing.
 
-      ## Your Inputs
-      Read:
-      - {SCRATCHPAD}/semantic_invariants.md (invariants to test)
-      - {SCRATCHPAD}/state_variables.md (state variables)
-      - {SCRATCHPAD}/function_list.md (all functions)
+      ## Your Inputs -- read ALL (each contributes different invariant types):
+      - {SCRATCHPAD}/design_context.md (protocol purpose, key invariants -- PRIMARY for economic properties)
+      - {SCRATCHPAD}/findings_inventory.md (Medium+ findings -> fuzz targets)
+      - {SCRATCHPAD}/semantic_invariants.md (structural properties)
+      - {SCRATCHPAD}/state_variables.md (variable types)
+      - {SCRATCHPAD}/function_list.md (action targets)
       - {SCRATCHPAD}/contract_inventory.md (contracts in scope)
+      - {SCRATCHPAD}/constraint_variables.md (realistic value ranges)
       - Source files in scope
 
       ## Your Task
 
       ### STEP 1: Generate Medusa Harness Contracts
       Create a `.medusa-tests/` directory in PROJECT_ROOT.
-      For each key invariant from semantic_invariants.md (max 5):
+      Medusa execution is zero token cost -- test ALL meaningful invariants (NO CAP).
+      Derive from: design_context.md (economic), findings_inventory.md (bug targets),
+      semantic_invariants.md (structural), constraint_variables.md (boundaries).
+      Include lifecycle action functions for multi-step sequences.
+      Use realistic value bounds from constraint_variables.md.
+      For each invariant:
       1. Write a standalone Medusa-compatible test contract that:
          - Imports the target contracts
          - Defines property functions prefixed with `fuzz_` that return bool
@@ -96,13 +103,21 @@ ADAPTIVE_DEPTH_LOOP(findings_inventory):
       - Which invariant was violated
       - Evidence tag: [MEDUSA-PASS] (counterexample = mechanical proof of violation)
 
+      Report category coverage:
+      | Category | Count | Source | Covered? |
+      | Protocol economic | {n} | design_context.md | YES/NO |
+      | Finding-derived | {n} | findings_inventory.md | YES/NO |
+      | Lifecycle | {n} | function_list.md | YES/NO |
+      | Structural | {n} | semantic_invariants.md | YES/NO |
+      | Boundary | {n} | constraint_variables.md | YES/NO |
+
       If no violations: report coverage summary only.
       If medusa errors or fails to compile harness: document error and exit gracefully.
 
       ## Output
       Write to {SCRATCHPAD}/medusa_fuzz_findings.md
 
-      Return: 'DONE: {N} invariants tested, {V} violations found, {C}% coverage'
+      Return: 'DONE: {N} invariants tested ({categories} categories), {V} violations found, {C}% coverage'
     ")
     // Runs in parallel — do NOT await here, await with other fuzz agents
     // Violations produce [MEDUSA-N] findings as counterexamples for depth agents
