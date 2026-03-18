@@ -15,7 +15,8 @@ description: "Launch Plamen security audit pipeline. Usage: /plamen [core|thorou
 - If it contains `scope:` followed by a file path, set `SCOPE_FILE` to that path. The file should list in-scope contracts/files.
 - If it contains `notes:` followed by text (up to end of arguments or next known prefix), set `SCOPE_NOTES` to that text. Passed to recon as additional audit context (e.g., "focus on vault module, ignore governance").
 - If it contains `proven-only:` followed by `true` (or just `proven-only: true`), set `PROVEN_ONLY = true`. When enabled, findings whose best evidence is `[CODE-TRACE]` (no executed PoC or fuzzer counterexample) are capped at Low severity in the report. Default: false.
-- If MODE, PROJECT_PATH, and DOCS_PATH (or nodocs) are all resolved, skip the entire wizard — jump directly to "Step 0d: Launch".
+- If MODE, PROJECT_PATH, DOCS_PATH (or nodocs), AND `proven-only:` are all resolved, skip the entire wizard — jump directly to "Step 0d: Launch".
+- If MODE, PROJECT_PATH, and DOCS_PATH (or nodocs) are resolved but `scope:` and `proven-only:` are NOT specified, skip to Step 0c.5 (scope selection).
 - If MODE is set but docs status is unknown (no `docs:` and no `nodocs`), skip to Step 0c only.
 - If `$ARGUMENTS` contains "compare", jump directly to the compare flow (Step 0e). If it also contains `report:` followed by a file path, set `REPORT_PATH`. If it contains `ground_truth:` followed by a file path, set `GROUND_TRUTH_PATH`. If both are set, skip the interactive file selection in Step 0e and proceed directly.
 - If `$ARGUMENTS` is empty, run the full interactive wizard starting at Step 0a.
