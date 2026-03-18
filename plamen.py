@@ -920,18 +920,24 @@ def show_hint_panel():
 
 # ── Helpers ──────────────────────────────────────────────────
 
-_SKIP_DIRS = {'lib', 'node_modules', 'target', 'build', '.git', 'test', 'tests',
-              'out', 'cache', 'artifacts', '.anchor', '.aptos', 'mock', 'mocks',
-              'script', 'deploy', 'migrations', 'flatten', 'typechain',
-              'typechain-types', 'coverage', 'docs', 'doc'}
+# Dirs skipped at ANY depth (build artifacts, tooling, never contain source)
+_SKIP_ALWAYS = {'node_modules', '.git', 'cache', 'artifacts', '.anchor', '.aptos',
+                'typechain', 'typechain-types', 'coverage', '__pycache__'}
+# Dirs skipped only at project ROOT level (contain deps/tests/scripts, not source)
+_SKIP_ROOT = {'lib', 'target', 'build', 'out', 'test', 'tests', 'mock', 'mocks',
+              'script', 'deploy', 'migrations', 'flatten', 'docs', 'doc'}
 _SRC_EXTS = {'.sol', '.rs', '.move'}
 
 
 def _count_source_files(d: str) -> int:
     """Count .sol/.rs/.move files recursively, pruning skip dirs on descent."""
+    d = os.path.normpath(d)
     total = 0
     for root, dirs, files in os.walk(d):
-        dirs[:] = [x for x in dirs if x not in _SKIP_DIRS]
+        if os.path.normpath(root) == d:
+            dirs[:] = [x for x in dirs if x not in _SKIP_ALWAYS and x not in _SKIP_ROOT]
+        else:
+            dirs[:] = [x for x in dirs if x not in _SKIP_ALWAYS]
         total += sum(1 for f in files if os.path.splitext(f)[1] in _SRC_EXTS)
     return total
 
@@ -1030,8 +1036,12 @@ def estimate_cost(target: str, mode: str,
             "pct_x5": 0, "pct_x20": 0, "pct_pro": 0, "scoped": False,
         }
 
+    target_norm = os.path.normpath(target)
     for root, dirs, files in os.walk(target):
-        dirs[:] = [x for x in dirs if x not in _SKIP_DIRS]
+        if os.path.normpath(root) == target_norm:
+            dirs[:] = [x for x in dirs if x not in _SKIP_ALWAYS and x not in _SKIP_ROOT]
+        else:
+            dirs[:] = [x for x in dirs if x not in _SKIP_ALWAYS]
         for fname in files:
             if os.path.splitext(fname)[1] not in _SRC_EXTS:
                 continue
