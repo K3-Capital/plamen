@@ -7,6 +7,24 @@
 
 Please set up Plamen (Web3 Security Auditor) on my machine. Follow these steps exactly:
 
+## Step 0: Check prerequisites
+
+Check if the required tools are installed. Run these checks and report what's missing:
+
+```bash
+python3 --version || python --version    # need 3.11+
+node --version                           # need 18+
+npx --version
+git --version
+```
+
+If any are missing:
+- **Python**: Download from https://python.org (3.11 or later). On macOS: `brew install python@3.12`. On Ubuntu: `sudo apt install python3.12 python3.12-venv python3-pip`.
+- **Node.js**: Download from https://nodejs.org (LTS). On macOS: `brew install node`. On Ubuntu: `curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - && sudo apt install -y nodejs`.
+- **Git**: Download from https://git-scm.com. On macOS: `brew install git`. On Ubuntu: `sudo apt install git`.
+
+Do NOT proceed to Step 1 until all four tools are available.
+
 ## Step 1: Clone the repository
 
 ```bash

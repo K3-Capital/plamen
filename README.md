@@ -6,6 +6,14 @@ Orchestrates 15-95 AI agents across 8 phases to produce audit reports with verif
 
 ---
 
+## Prerequisites
+
+[Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code), [Python 3.11+](https://python.org), [Node.js 18+](https://nodejs.org), [Git](https://git-scm.com)
+
+> The install step below checks for these and tells you what's missing. Per-language tools (Foundry, Solana CLI, etc.) are installed automatically via `plamen setup`.
+
+---
+
 ## Install
 
 ```bash
@@ -121,14 +129,6 @@ See [docs/usage.md](docs/usage.md) for PATH setup and all CLI options.
 | **Sui Move** | sui CLI | -- | Parameterized tests |
 
 Language detection is automatic based on config files.
-
----
-
-## Prerequisites
-
-**Required**: Claude Code CLI, Python 3.11+, Node.js 18+, Git
-
-**Per-language**: Install the build tools for your chain. The `plamen setup` command handles this for you, or see [docs/setup.md](docs/setup.md).
 
 ---
 
