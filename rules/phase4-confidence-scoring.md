@@ -214,3 +214,5 @@ The scoring agent reads `rag_validation.md` for Axis 4 instead of checking indiv
 | `rag_validation.md` | RAG Validation Sweep Agent (Phase 4b.5) | Per-finding RAG scores from validate_hypothesis + search_solodit_live |
 | `design_stress_findings.md` | Design Stress Testing Agent | Design limit, adequacy, and constraint coherence findings |
 | `composition_coverage.md` | Chain Analysis Agent | Finding-pair composition coverage map (explored/unexplored) |
+| `violations.md` | Orchestrator (on skip) | Thorough mode workflow violations — skipped mandatory steps (Rule 12) |
+| `checkpoint_postdepth.md` | Orchestrator (after depth) | Post-depth assertion results for Thorough mode completeness |

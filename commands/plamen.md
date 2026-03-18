@@ -601,6 +601,29 @@ Return: 'DONE: {G} cluster_gaps, {T} consequence traces ({D} deep_propagation), 
 ")
 ```
 
+### THOROUGH CHECKPOINT: Pre-Depth (orchestrator inline)
+
+When `MODE == thorough` AND `LANGUAGE == evm`:
+
+**Step A: Invariant Fuzz Campaign** (MANDATORY — zero budget cost)
+Read template: `~/.claude/prompts/{LANGUAGE}/phase4b-invariant-fuzz.md`
+Spawn agent. Await completion. Write results to `invariant_fuzz_results.md`.
+The template has a 5-minute timeout built in. Do NOT skip this to save time.
+
+**Step B: Medusa Campaign** (MANDATORY if MEDUSA_AVAILABLE — zero budget cost)
+Read from `~/.claude/prompts/{LANGUAGE}/phase4b-loop.md` Medusa section.
+Spawn agent IN PARALLEL with Step A. Await completion.
+Write results to `medusa_fuzz_findings.md`.
+
+**Step C: Assert Completion**
+```
+ASSERT: invariant_fuzz_results.md exists (or COMPILATION_FAILED logged)
+ASSERT: medusa_fuzz_findings.md exists (or MEDUSA_UNAVAILABLE logged)
+IF either missing AND no failure logged → VIOLATION: "Fuzz campaign skipped without failure reason"
+```
+
+If violations are detected, log them to `{SCRATCHPAD}/violations.md` but continue — the violation log is the enforcement mechanism.
+
 ### Phase 4b: Adaptive Depth Loop
 
 > **Reference**: `~/.claude/rules/phase4-confidence-scoring.md` for scoring model, anti-dilution rules, and convergence criteria.
@@ -618,7 +641,7 @@ The orchestrator runs the full loop autonomously:
    - **Niche agents**: For each REQUIRED niche agent in `template_recommendations.md` → `Niche Agents` section, read its definition from `~/.claude/agents/skills/niche/{NAME}.md` and spawn alongside depth agents. Each niche agent = 1 budget slot.
    - **Timeout split-and-retry**: If any agent times out, split its findings into 2 "lite" agents (max 3 findings each, no static analyzer, max 5 files). 2 lite agents = 1 budget unit.
 
-2. **Score all findings** (Core/Thorough only — Light mode skips scoring): Spawn haiku scoring agent → `confidence_scores.md`
+2. **Score all findings** (MANDATORY for Core/Thorough — Light mode skips scoring). Orchestrator MUST spawn the scoring agent and await `confidence_scores.md` before deciding whether to proceed to iteration 2. Skipping scoring to "go straight to chain analysis" is a VIOLATION. Spawn haiku scoring agent → `confidence_scores.md`
    - **Core mode**: 2-axis scoring (Evidence x 0.5 + Analysis Quality x 0.5)
    - **Thorough mode**: 4-axis scoring (Evidence x 0.25 + Consensus x 0.25 + Analysis Quality x 0.3 + RAG Match x 0.2)
    - CONFIDENT (>= 0.7): no more depth needed
@@ -642,7 +665,26 @@ The orchestrator runs the full loop autonomously:
 
 > **Light mode: Phase 4b.5 RAG Sweep** — Skip entirely. RAG validation is not performed in Light mode (no confidence scoring axis requires it).
 
-6. **Budget redirect (Thorough mode only)**: If `remaining_budget >= 3` at loop exit, spawn Design Stress Testing Agent.
+6. **Design Stress Testing (Thorough mode only)**: ALWAYS spawn Design Stress Testing Agent. 1 slot is pre-reserved and UNCONDITIONAL — not a "budget redirect." This agent runs regardless of remaining budget.
+
+### THOROUGH CHECKPOINT: Post-Depth (orchestrator inline)
+
+```
+ASSERT: confidence_scores.md exists AND is non-empty
+ASSERT: adaptive_loop_log.md exists (records iteration count and exit reason)
+ASSERT: phase4b_manifest.md exists (compaction-resilient manifest)
+ASSERT: IF uncertain Medium+ findings exist after iter 1 → adaptive_loop_log shows iter >= 2
+LOG checkpoint result to {SCRATCHPAD}/checkpoint_postdepth.md
+```
+
+If any assertion fails, log to `{SCRATCHPAD}/violations.md` before proceeding.
+
+### Phase 4b.5: RAG Validation Sweep (MANDATORY for Core/Thorough)
+
+Read: `~/.claude/rules/phase4-confidence-scoring.md` → "Phase 4b.5" section.
+Spawn sonnet RAG sweep agent. This is NOT optional.
+If MCP tools fail → agent falls back to WebSearch → if that fails → floor scores (0.3).
+The sweep MUST be attempted. Writing floor scores without attempting is a VIOLATION.
 
 ### Phase 5.1: Skeptic-Judge Verification (Thorough mode only, HIGH/CRIT)
 
@@ -656,6 +698,7 @@ After ALL standard Phase 5 verifiers complete:
 5. Apply final verdict per the ruling table in the verification prompt
 
 **Skip in Light and Core mode.**
+**Thorough mode**: This step MUST execute for every HIGH and CRITICAL finding. "All PoCs passed so skeptic is unnecessary" is not a valid skip reason.
 
 ### Phase 5.5: Post-Verification Finding Extraction
 

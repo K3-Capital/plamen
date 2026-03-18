@@ -34,10 +34,13 @@ ADAPTIVE_DEPTH_LOOP(findings_inventory):
   spawn semantic_invariant_agent(model="sonnet", SCRATCHPAD, state_variables, function_list, source_files)
   await semantic_invariant_agent  // MUST complete before depth agents spawn (they consume its output)
 
-  // ═══ INVARIANT FUZZ CAMPAIGN (v9.9.5 — EVM only) ═══
+  // ═══ INVARIANT FUZZ CAMPAIGN (v9.9.5 — EVM only, MANDATORY in Thorough) ═══
+  // HARD GATE (Thorough mode): This campaign MUST run. The 5-minute timeout IS the time management.
+  // Do NOT skip "for speed" — the timeout handles runaway campaigns automatically.
+  // Zero depth budget cost. Skipped ONLY if: no foundry.toml, empty semantic_invariants.md, LANGUAGE != evm, or MODE != thorough.
+  // ALL OTHER SKIP REASONS ARE VIOLATIONS.
   // Runs AFTER semantic invariants, BEFORE depth agents. Provides concrete counterexamples
   // that depth agents can investigate (higher-quality evidence than static analysis alone).
-  // Zero depth budget cost. Skipped if foundry.toml not present or semantic_invariants.md empty.
   // Read template from: ~/.claude/prompts/evm/phase4b-invariant-fuzz.md
   if file_exists(PROJECT_ROOT + "/foundry.toml") and semantic_invariants_has_content:
     spawn invariant_fuzz_agent(model="sonnet", SCRATCHPAD, PROJECT_ROOT, semantic_invariants, state_variables, function_list, contract_inventory)
@@ -48,10 +51,11 @@ ADAPTIVE_DEPTH_LOOP(findings_inventory):
   // LANGUAGE != evm, or MODE == core. Non-EVM chains lack equivalent invariant fuzz infrastructure.
   // Core mode skips invariant fuzz to save budget — Thorough mode only.
 
-  // ═══ MEDUSA FUZZ CAMPAIGN (EVM Thorough only, parallel with Foundry fuzz) ═══
+  // ═══ MEDUSA FUZZ CAMPAIGN (EVM Thorough only, MANDATORY if installed) ═══
+  // HARD GATE: If MEDUSA_AVAILABLE == true, this campaign MUST run. Silently skipping = VIOLATION.
   // Runs IN PARALLEL with the Foundry invariant fuzz agent (if any). Zero depth budget cost.
   // Medusa generates its OWN standalone harness contracts — NOT Foundry-compatible.
-  // Graceful degradation: if medusa not installed, skip silently.
+  // Graceful degradation: if medusa not installed, skip silently (log MEDUSA_UNAVAILABLE).
   if MEDUSA_AVAILABLE and MODE == thorough and LANGUAGE == evm:
     spawn medusa_campaign_agent(model="sonnet", prompt="
       You are the Medusa Fuzz Campaign Agent. You generate and run Medusa-specific invariant tests.
@@ -115,7 +119,13 @@ ADAPTIVE_DEPTH_LOOP(findings_inventory):
   // For each niche agent: read definition from ~/.claude/agents/skills/niche/{NAME}.md, spawn as general-purpose
   // Niche agents write to {SCRATCHPAD}/niche_{name}_findings.md
   //
-  // ═══ MODEL DIVERSITY ═══
+  // ═══ MODEL DIVERSITY (MANDATORY — Thorough mode) ═══
+  // The orchestrator MUST NOT use the same model for all depth agents.
+  // REQUIRED assignment:
+  //   depth-token-flow: opus, depth-state-trace: opus
+  //   depth-edge-case: sonnet, depth-external: sonnet
+  //   All scanners + validation + niche: sonnet
+  // Using opus for all agents is a VIOLATION (wastes model diversity benefit).
   // Assign models to maximize decorrelation between depth agents:
   //   depth-token-flow: opus   (highest reasoning demand — balance invariants)
   //   depth-state-trace: opus  (highest reasoning demand — cross-function state)
