@@ -5,6 +5,7 @@ pydantic>=2.0.0
 
 # Embeddings - Code Aware (priority order)
 sentence-transformers>=2.2.0  # For Nomic/CodeBERT/MiniLM
+einops>=0.7.0                 # Required by nomic-embed-text-v1.5 (trust_remote_code)
 # voyageai>=0.2.0  # Optional: uncomment if you have VOYAGE_API_KEY
 
 # Data fetching
@@ -24,6 +25,6 @@ click>=8.1.0
 rich>=13.0.0
 python-dotenv>=1.0.0
 
-# Optional: Better embeddings
-# torch>=2.0.0  # Required for sentence-transformers
-# transformers>=4.30.0  # Required for Nomic
+# Note: torch and transformers are installed automatically by sentence-transformers
+# To use Voyage Code embeddings (API-based, best quality), uncomment:
+# voyageai>=0.2.0  # Requires VOYAGE_API_KEY env var
