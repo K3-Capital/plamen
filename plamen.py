@@ -1273,9 +1273,11 @@ def run_setup():
             missing[group] = group_missing
 
     rag_empty = _rag_needs_build()
+    rag_count = _probe_rag_db()
 
-    if not missing and not rag_empty:
-        w(f"  {_C_GREEN}Everything is set up.{_RST}\n\n")
+    if not missing and rag_count > 0 and not rag_empty:
+        w(f"  {_C_GREEN}Everything is set up ({rag_count:,} RAG entries).{_RST}\n")
+        w(f"  {_C_GRAY}To rebuild RAG: plamen rag{_RST}\n\n")
         return
 
     # ── Build checkbox choices with time estimates ───────────
@@ -1286,6 +1288,9 @@ def run_setup():
 
     if rag_empty:
         item_choices.append({"name": "RAG DB   vulnerability knowledge base",
+                             "value": "__rag__"})
+    elif rag_count > 0:
+        item_choices.append({"name": f"RAG DB   rebuild/extend ({rag_count:,} entries currently)",
                              "value": "__rag__"})
 
     all_values = [c["value"] for c in item_choices]
@@ -2210,6 +2215,15 @@ def main():
         if arg == "uninstall":
             show_banner()
             run_uninstall()
+            return
+
+        if arg == "rag":
+            show_banner()
+            w = sys.stdout.write
+            w(f"\n  {_BOLD}{_C_WHITE}Building RAG vulnerability database...{_RST}\n\n")
+            sys.stdout.flush()
+            _build_rag_db(w)
+            return
             return
 
         if arg in ("light", "core", "thorough", "compare"):
