@@ -34,7 +34,7 @@ First, output the banner as text (no tool calls):
 ╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚═╝  ╚═══╝
 ```
 
-**Web3 Security Auditor** v1.0.3
+**Web3 Security Auditor** v1.0.4
 
 Then run a quick toolchain probe (via Bash, all in one command):
 
@@ -229,7 +229,7 @@ find "{PROJECT_PATH}" -type f \( -name '*.sol' -o -name '*.rs' -o -name '*.move'
   done | xargs wc -l 2>/dev/null | tail -1
 ```
 
-If `SCOPE_FILE` is set, filter: only count files whose basename (or basename without extension) appears in the scope file. If `SCOPE_NOTES` is set and no scope file, extract capitalized words (e.g., "Vault", "Router") and match against basenames.
+If `SCOPE_FILE` is set, filter: only count files whose basename (or basename without extension) appears in the scope file. Scope files can be in any format — extract `.sol`/`.rs`/`.move` filenames using regex `[\w/\\.-]+\.(?:sol|rs|move)` to handle bare paths (`src/Vault.sol`), markdown tables (`| Vault.sol | 300 |`), and bullet lists (`- contracts/Vault.sol`). If `SCOPE_NOTES` is set and no scope file, extract capitalized words (e.g., "Vault", "Router") and match against basenames.
 
 Extract `TOTAL_FILES` (number of matching files) and `TOTAL_LINES` (total line count). If the project path is a home directory or system root, set both to 0 and skip the estimate.
 

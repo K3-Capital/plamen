@@ -5,6 +5,12 @@ All notable changes to Plamen will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4] - 2026-03-19
+
+### Fixed
+- **Scope file estimation**: Parser now handles markdown tables (`| File.sol | 300 |`), bullet lists (`- contracts/File.sol`), and bare paths (`File.sol`) — previously only bare paths worked, causing "~0 lines, 0 files" for markdown-formatted scope files
+- **`/plamen` scope parsing**: Added explicit regex instruction for scope file parsing in the `/plamen` command to match `plamen.py` behavior
+
 ## [1.0.3] - 2026-03-19
 
 ### Added
