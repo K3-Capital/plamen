@@ -2190,6 +2190,31 @@ def main():
     if len(sys.argv) > 1:
         arg = sys.argv[1].lower()
 
+        # ── Help ──────────────────────────────────────────────
+        if arg in ("help", "--help", "-h"):
+            w = sys.stdout.write
+            show_banner()
+            w(f"  {_C_WHITE}Usage:{_RST}\n")
+            w(f"    {_C_ORANGE}plamen{_RST}                              Interactive wizard\n")
+            w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}core{_RST} /path/to/project        Audit in Core mode\n")
+            w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}thorough{_RST} /path/to/project    Audit in Thorough mode\n")
+            w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}light{_RST} /path/to/project       Audit in Light mode\n")
+            w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}compare{_RST}                      Diff reports\n")
+            w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}setup{_RST}                        Install tools + build RAG\n")
+            w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}rag{_RST}                          Rebuild RAG database only\n")
+            w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}uninstall{_RST}                    Remove from ~/.claude\n")
+            w(f"\n  {_C_WHITE}Options (for audit modes):{_RST}\n")
+            w(f"    {_C_GRAY}--docs{_RST} PATH              Whitepaper or spec file\n")
+            w(f"    {_C_GRAY}--scope{_RST} PATH             Scope file listing contracts\n")
+            w(f"    {_C_GRAY}--notes{_RST} TEXT             Scope notes (free text)\n")
+            w(f"    {_C_GRAY}--network{_RST} NAME           Target network (ethereum, arbitrum, etc.)\n")
+            w(f"    {_C_GRAY}--proven-only{_RST}            Cap unproven findings at Low severity\n")
+            w(f"\n  {_C_WHITE}Inside Claude Code:{_RST}\n")
+            w(f"    {_C_GRAY}/plamen{_RST}                          Interactive wizard\n")
+            w(f"    {_C_GRAY}/plamen core{_RST} docs: file.pdf      With options\n")
+            w(f"\n")
+            return
+
         # ── Estimate subcommand (for /plamen command) ────────
         if arg == "--estimate":
             import json as _json
