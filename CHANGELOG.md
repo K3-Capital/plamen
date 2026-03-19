@@ -5,6 +5,17 @@ All notable changes to Plamen will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5] - 2026-03-19
+
+### Changed
+- **Skill file architecture**: All 92 skill files restructured from `SKILL_NAME.md` to `skill-name/SKILL.md` named-folder format with YAML frontmatter (`name`, `description`). Enables Claude Code skill registry compliance and reference file splitting for large skills.
+- **Verification protocol split**: 4 large verification-protocol files (700-1097 lines) split into `SKILL.md` + `references/` subdirectory (advanced.md, templates.md) for better context management.
+- **Orchestrator path resolution**: `commands/plamen.md` updated to construct `skill-name/SKILL.md` paths for standard skills, injectable skills, and niche agents (lines 467, 474, 724).
+- **Em-dash normalization**: All em dashes (--) replaced with regular dashes (-) across modified files for consistent formatting.
+
+### Fixed
+- **Blocker from PR #1**: `commands/plamen.md` skill path references were not updated in the original PR -- would have caused silent skill loading failures. Fixed before merge.
+
 ## [1.0.4] - 2026-03-19
 
 ### Fixed

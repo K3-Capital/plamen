@@ -36,7 +36,7 @@ First, output the banner as text (no tool calls):
 ╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚═╝  ╚═══╝
 ```
 
-**Web3 Security Auditor** v1.0.4
+**Web3 Security Auditor** v1.0.5
 
 Then run a quick toolchain probe (via Bash, all in one command):
 
@@ -464,14 +464,14 @@ Replace placeholders: `{path}`, `{scratchpad}`, `{docs_path_or_url_if_provided}`
 
 ### Step 2b: Instantiate Templates
 For each template in `template_recommendations.md`:
-1. Read template from `~/.claude/agents/skills/{LANGUAGE}/{TEMPLATE_NAME}.md`
+1. Read template from `~/.claude/agents/skills/{LANGUAGE}/{template-name}/SKILL.md` (folder name is lowercase-hyphenated version of the template name, e.g., ORACLE_ANALYSIS → oracle-analysis)
 2. Replace `{PLACEHOLDERS}` with instantiation parameters
 3. **Conditional loading**: Strip sections wrapped in `<!-- LOAD_IF: FLAG -->...<!-- END_LOAD_IF: FLAG -->` when the flag was NOT detected
 4. Compose agent prompt with instantiated template
 
 ### Step 2b.1: Load Injectable Skills (Split Delivery)
 1. Read protocol type from `{scratchpad}/template_recommendations.md` → `## Injectable Skills`
-2. For each recommended injectable: Read from `~/.claude/agents/skills/injectable/{SKILL_NAME}.md`
+2. For each recommended injectable: Read from `~/.claude/agents/skills/injectable/{skill-name}/SKILL.md`
 3. **Breadth agents**: Extract ONLY section headers + key questions (1-line per section, ~200 tokens max)
 4. **Depth agents (Phase 4b)**: Generate specific investigation questions per depth domain. Spawn **dedicated Injectable Investigation Agents** (sonnet, 1 per domain) IN PARALLEL with main depth agents
 5. Injectable skills spawn up to 4 dedicated sonnet agents (1 per domain), each costing 1 depth budget slot
@@ -721,7 +721,7 @@ The orchestrator runs the full loop autonomously:
    - Blind Spot Scanner B (Guards, Visibility & Inheritance + Override Safety)
    - Blind Spot Scanner C (Role Lifecycle, Capability Exposure & Reachability)
    - Validation Sweep Agent
-   - **Niche agents**: For each REQUIRED niche agent in `template_recommendations.md` → `Niche Agents` section, read its definition from `~/.claude/agents/skills/niche/{NAME}.md` and spawn alongside depth agents. Each niche agent = 1 budget slot.
+   - **Niche agents**: For each REQUIRED niche agent in `template_recommendations.md` → `Niche Agents` section, read its definition from `~/.claude/agents/skills/niche/{name}/SKILL.md` and spawn alongside depth agents. Each niche agent = 1 budget slot.
    - **Timeout split-and-retry**: If any agent times out, split its findings into 2 "lite" agents (max 3 findings each, no static analyzer, max 5 files). 2 lite agents = 1 budget unit.
 
 2. **Score all findings** (MANDATORY for Core/Thorough — Light mode skips scoring). Orchestrator MUST spawn the scoring agent and await `confidence_scores.md` before deciding whether to proceed to iteration 2. Skipping scoring to "go straight to chain analysis" is a VIOLATION. Spawn haiku scoring agent → `confidence_scores.md`
