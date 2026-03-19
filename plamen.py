@@ -778,6 +778,7 @@ def _setup_python_deps(w):
         ("farofino-mcp", "custom-mcp/farofino-mcp/requirements.txt"),
     ]
     editable_pkgs = [
+        ("unified-vuln-db", "custom-mcp/unified-vuln-db"),
         ("solana-fender", "custom-mcp/solana-fender"),
         ("slither-mcp (EVM)", "custom-mcp/slither-mcp"),
     ]
