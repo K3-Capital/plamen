@@ -22,13 +22,13 @@ plamen setup                        # just install tools + build RAG
 
 ```bash
 # Unix/macOS -- add to ~/.bashrc or ~/.zshrc
-export PATH="$HOME/.claude:$PATH"
+export PATH="$HOME/.plamen:$PATH"
 
 # Windows -- run once in PowerShell
-[System.Environment]::SetEnvironmentVariable("Path", "$env:USERPROFILE\.claude;" + $env:Path, "User")
+[System.Environment]::SetEnvironmentVariable("Path", "$env:USERPROFILE\.plamen;" + $env:Path, "User")
 ```
 
-Or run directly: `python ~/.claude/plamen.py`
+Or run directly: `python ~/.plamen/plamen.py`
 
 ### Option B: Inside Claude Code
 

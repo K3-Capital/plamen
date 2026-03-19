@@ -61,4 +61,4 @@ See `mcp.json.example` for the full 9-server configuration. Key entries:
 }
 ```
 
-Path notes: `cwd` fields use relative paths resolved from `~/.claude/`.
+Path notes: `cwd` fields use relative paths resolved from `~/.plamen/`.

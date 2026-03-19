@@ -2,7 +2,7 @@
 
 > Skills are methodology files read by agents via `Read ~/.claude/agents/skills/{LANGUAGE}/{name}/SKILL.md`.
 > The orchestrator resolves `{LANGUAGE}` to `evm`, `solana`, `aptos`, or `sui` based on Step 0 detection.
-> EVM has 18 skills, Solana has 19 skills, Aptos has 21 skills, Sui has 21 skills - no shared skills directory exists.
+> EVM has 18 skills, Solana has 20 skills, Aptos has 21 skills, Sui has 21 skills - no shared skills directory exists.
 
 ## EVM Skills (`~/.claude/agents/skills/evm/`)
 

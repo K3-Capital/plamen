@@ -64,15 +64,23 @@
 
 ## Installation
 
+### 0. Windows: Enable Developer Mode
+
+> **Skip on macOS/Linux.** Symlinks work without elevated privileges on Unix systems.
+
+The installer creates symlinks from `~/.plamen/` into `~/.claude/`. On Windows, file symlinks require Developer Mode:
+- **Settings UI**: Settings > System > For Developers > toggle ON
+- **Admin PowerShell**: `reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock /v AllowDevelopmentWithoutDevLicense /t REG_DWORD /d 1 /f`
+
 ### 1. Clone and initialize
 
 ```bash
-git clone https://github.com/PlamenTSV/plamen.git ~/.claude
-cd ~/.claude
+git clone https://github.com/PlamenTSV/plamen.git ~/.plamen
+cd ~/.plamen
 git submodule update --init --recursive
 ```
 
-> **Note**: This clones into `~/.claude` -- Claude Code reads config from this path. Back up any existing `~/.claude` first.
+> This clones into `~/.plamen`, keeping it separate from Claude Code's `~/.claude`. The installer creates symlinks so Claude Code discovers Plamen's agents, rules, and commands. Your existing `~/.claude` settings are preserved via additive config merging.
 
 ### 2. Install Python dependencies
 
@@ -93,12 +101,14 @@ pip install -e custom-mcp/slither-mcp
 
 ### 3. Configure MCP servers
 
+If using `python plamen.py install`, config files are merged automatically (settings.json, mcp.json, CLAUDE.md). For manual setup:
+
 ```bash
-cp mcp.json.example mcp.json
-cp settings.json.example settings.json
+cp mcp.json.example ~/.claude/mcp.json      # if ~/.claude/mcp.json doesn't exist
+cp settings.json.example ~/.claude/settings.json  # if ~/.claude/settings.json doesn't exist
 ```
 
-Edit `mcp.json` with your API keys. See [MCP Servers](mcp-servers.md) for details.
+Edit `~/.claude/mcp.json` with your API keys. See [MCP Servers](mcp-servers.md) for details.
 
 ### 4. Build the RAG database
 

@@ -14,7 +14,7 @@ Every finding MUST use this format:
 **Step Execution**: ✓1,2,3,5 | ✗4(N/A) | ?6,7(uncertain)
 **Rules Applied**: [R4:✓, R5:✓, R6:✗(no role), R8:✗(single-step), R10:✓]
 **Depth Evidence** (depth agents only): [BOUNDARY:tested X=0,MAX], [VARIATION:param changed from A→B], [TRACE:followed to revert at L120]
-**Severity**: Critical/High/Medium/Low/Info
+**Severity**: Critical/High/Medium/Low/Informational
 **Location**: SourceFile:LineN
 **Description**: What's wrong
 **Impact**: What can happen (if finding is in a shared utility/library, list impact at EACH consumption point)

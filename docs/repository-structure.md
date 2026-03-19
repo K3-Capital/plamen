@@ -1,7 +1,7 @@
 # Repository Structure
 
 ```
-~/.claude/
+~/.plamen/
 +-- CLAUDE.md                          # Orchestrator config -- mode table, rules, file refs
 +-- plamen.py                          # Terminal wrapper (Rich + InquirerPy)
 +-- plamen.sh / plamen.bat             # Launcher scripts

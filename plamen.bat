@@ -1,2 +1,3 @@
 @echo off
-python "%USERPROFILE%\.claude\plamen.py" %*
+REM Plamen launcher — finds plamen.py relative to this script
+python "%~dp0plamen.py" %*

@@ -6,7 +6,7 @@
 
 ```bash
 # Auto-install everything (interactive)
-python plamen.py setup
+cd ~/.plamen && python plamen.py setup
 ```
 
 The setup wizard detects your OS and installed tools, then offers to install missing ones. For manual installation or troubleshooting, see below.
@@ -22,6 +22,19 @@ The setup wizard detects your OS and installed tools, then offers to install mis
 | Node.js | 18+ | npm-based MCP servers | [nodejs.org](https://nodejs.org) |
 | Git | any | Submodules, version control | [git-scm.com](https://git-scm.com) |
 | Rust | stable | Compiling security tools | [rustup.rs](https://rustup.rs) |
+
+### Windows: Developer Mode (required)
+
+Plamen's installer creates symlinks from `~/.plamen/` into Claude Code's `~/.claude/` directory. On Windows, **file symlinks require Developer Mode** (directory junctions work without it, but file symlinks do not).
+
+**Enable Developer Mode** (one-time):
+- **Settings UI**: Settings > System > For Developers > toggle ON
+- **Admin PowerShell**: `reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock /v AllowDevelopmentWithoutDevLicense /t REG_DWORD /d 1 /f`
+- **Admin CMD**: `reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock /v AllowDevelopmentWithoutDevLicense /t REG_DWORD /d 1 /f`
+
+This is also required later for Solana builds (`cargo-build-sbf` creates symlinks internally).
+
+> **macOS / Linux**: No extra setup needed. Symlinks work without elevated privileges.
 
 ---
 

@@ -12,35 +12,63 @@ Orchestrates 15-95 AI agents across 8 phases to produce audit reports with verif
 
 > The install step below checks for these and tells you what's missing. Per-language tools (Foundry, Solana CLI, etc.) are installed automatically via `plamen setup`.
 
+> **Windows users**: Enable Developer Mode before installing (required for symlinks). Settings > System > For Developers > toggle ON. Or run in admin PowerShell: `reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock /v AllowDevelopmentWithoutDevLicense /t REG_DWORD /d 1 /f`
+
 ---
 
 ## Install
 
 ```bash
-git clone https://github.com/PlamenTSV/plamen.git ~/.claude
-cd ~/.claude && git submodule update --init --recursive
+git clone https://github.com/PlamenTSV/plamen.git ~/.plamen
+cd ~/.plamen && python plamen.py install
 ```
 
-Then pick **one** of these setup paths:
+This clones into `~/.plamen` (not `~/.claude`) and runs the installer, which:
+- Creates symlinks from `~/.plamen` into `~/.claude/` so Claude Code discovers Plamen's agents, rules, prompts, and commands
+- Merges Plamen's permissions into your existing `settings.json` (additive only — won't remove your entries)
+- Merges MCP server definitions into `mcp.json` (won't overwrite your existing servers)
+- Injects Plamen instructions into `CLAUDE.md` between `<!-- PLAMEN:START/END -->` markers (preserves your content)
+- Installs Python dependencies and builds the RAG database
 
-### Option A: Let Claude set it up (recommended)
-
-Open Claude Code and run:
-
-```
-> /plamen setup
-```
-
-Or paste the contents of [`SETUP.md`](SETUP.md) into Claude Code. It installs all dependencies, configures MCP servers, and builds the RAG database for you automatically.
-
-### Option B: Manual
+Your existing Claude Code configuration is preserved. To remove Plamen later: `python ~/.plamen/plamen.py uninstall`
 
 <details>
-<summary>Click to expand manual setup commands (~5-10 min)</summary>
+<summary>How symlinks work</summary>
 
-> `plamen setup` does all of this automatically. These commands are for reference or if you prefer manual control.
+The Plamen repo stays at `~/.plamen`. The installer creates symlinks (shortcuts) in `~/.claude/` that point back to `~/.plamen/`. When Claude Code reads `~/.claude/agents/depth-edge-case.md`, the OS transparently reads `~/.plamen/agents/depth-edge-case.md`. This means:
+- `git pull` in `~/.plamen` updates everything automatically — no re-install needed
+- Your own Claude Code files in `~/.claude/` (custom agents, commands, hooks) are untouched
+- Deleting `~/.plamen` would break the symlinks — don't delete it while Plamen is installed
+
+| Platform | How links are created | Requirements |
+|----------|----------------------|-------------|
+| **Linux / macOS** | Standard symlinks (`os.symlink`) | None |
+| **Windows (directories)** | Junctions (`mklink /J`) | None |
+| **Windows (files)** | Symlinks (`os.symlink`) | Developer Mode enabled |
+
+</details>
+
+> **Migrating from v1.0.x** (installed directly in `~/.claude`): Close Claude Code first, then run both commands together in one line:
+> ```bash
+> mv ~/.claude ~/.plamen && cd ~/.plamen && python plamen.py install
+> ```
+> This moves the repo to `~/.plamen` and immediately recreates `~/.claude` with symlinks + merged config. Claude Code will not work between `mv` and `install` — run them together.
+
+<details>
+<summary>Option B: Let Claude set it up</summary>
+
+Open Claude Code and paste the contents of [`SETUP.md`](SETUP.md). It handles everything including dependency installation.
+
+</details>
+
+<details>
+<summary>Option C: Manual dependency install (~5-10 min)</summary>
+
+> The installer above handles this. These commands are for reference only.
 
 ```bash
+cd ~/.plamen
+
 # 1. Python deps (~2GB download — PyTorch for embeddings)
 pip install -r requirements.txt
 pip install -r custom-mcp/unified-vuln-db/requirements.txt
@@ -50,12 +78,7 @@ pip install -e custom-mcp/solana-fender
 pip install -r custom-mcp/farofino-mcp/requirements.txt
 pip install -e custom-mcp/slither-mcp              # EVM only (needs Python 3.11+)
 
-# 2. Configure MCP servers
-cp mcp.json.example mcp.json                       # edit with your API keys
-cp settings.json.example settings.json
-# Get free keys: solodit.cyfrin.io, etherscan.io/apis, tavily.com
-
-# 3. Build RAG database (~5 min)
+# 2. Build RAG database (~5 min)
 export SOLODIT_API_KEY=your_key_here                # free at solodit.cyfrin.io
 cd custom-mcp/unified-vuln-db
 python -m unified_vuln.indexer index -s solodit --max-pages 10
@@ -63,7 +86,7 @@ python -m unified_vuln.indexer index -s defihacklabs
 python -m unified_vuln.indexer index -s immunefi
 cd ../..
 
-# 4. Chain tools (install what you need)
+# 3. Chain tools (install what you need)
 curl -L https://foundry.paradigm.xyz | bash && foundryup          # EVM
 pip install slither-analyzer                                       # EVM static analysis
 # See docs/setup.md for Solana, Aptos, Sui, Medusa, Trident
