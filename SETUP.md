@@ -168,6 +168,15 @@ echo 'export PATH="$HOME/.plamen:$PATH"' >> ~/.zshrc && source ~/.zshrc
 [System.Environment]::SetEnvironmentVariable("Path", "$env:USERPROFILE\.plamen;" + [System.Environment]::GetEnvironmentVariable("Path", "User"), "User")
 ```
 
+## Troubleshooting
+
+If any step fails, check [docs/dependencies.md](docs/dependencies.md) for platform-specific fixes:
+- **macOS**: `hnswlib` build fail → run `xcode-select --install` first
+- **macOS/Linux**: `externally-managed-environment` → handled automatically, but see docs if manual pip fails
+- **Linux**: ChromaDB SQLite version error → `pip install pysqlite3-binary`
+- **Python 3.13+**: PyTorch/sentence-transformers may not work → use Python 3.11 or 3.12
+- **Windows**: symlink permission error → enable Developer Mode (Step 0b)
+
 ## Done
 
 After setup, I can start an audit by typing `plamen` in my terminal or `/plamen` inside Claude Code.
