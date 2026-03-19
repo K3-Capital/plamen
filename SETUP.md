@@ -62,7 +62,25 @@ git submodule update --init --recursive
 
 > This clones into `~/.plamen`, keeping it separate from your Claude Code config at `~/.claude`. The installer creates symlinks — your existing settings, MCP servers, and CLAUDE.md content are preserved.
 
-## Step 2: Run the installer
+## Step 2: Set API keys BEFORE installing
+
+The installer builds the RAG vulnerability database during setup. The Solodit source (3400+ audit findings — the largest and most important source) requires an API key. **Set this before running the installer**, otherwise Solodit indexing will fail silently and you'll get a weaker RAG database.
+
+Set the Solodit API key as an environment variable (free key from https://solodit.cyfrin.io):
+
+**Linux / macOS:**
+```bash
+export SOLODIT_API_KEY=your_key_here
+```
+
+**Windows (PowerShell):**
+```powershell
+$env:SOLODIT_API_KEY = "your_key_here"
+```
+
+> Other API keys (Etherscan, Tavily, Helius, RPC URL) are configured AFTER install in `~/.claude/mcp.json`. Only Solodit is needed before install because the RAG indexer runs during setup.
+
+## Step 3: Run the installer
 
 Detect my OS and run the appropriate command:
 
@@ -84,21 +102,23 @@ This will:
 - Merge MCP server definitions into `mcp.json` (won't overwrite your existing servers)
 - Inject Plamen's CLAUDE.md instructions between `<!-- PLAMEN:START -->` / `<!-- PLAMEN:END -->` markers
 - Install Python dependencies (~2GB for PyTorch embeddings)
-- Build the RAG vulnerability database
+- Build the RAG vulnerability database (using the Solodit key from Step 2)
 
-## Step 3: Configure API keys
+## Step 4: Configure remaining API keys
 
 Edit `~/.claude/mcp.json`:
-- Replace `YOUR_SOLODIT_API_KEY` with a free key from https://solodit.cyfrin.io (**recommended** — needed to index 3400+ findings)
 - Replace `YOUR_RPC_URL` with an Ethereum RPC URL (Alchemy/Infura free tier, or public: `https://eth.llamarpc.com`)
 - Replace `YOUR_ETHERSCAN_API_KEY` with a free key from https://etherscan.io/apis (optional)
 - Replace `YOUR_TAVILY_API_KEY` with a free key from https://tavily.com (optional, used as RAG fallback)
 - Replace `YOUR_HELIUS_API_KEY` with a free key from https://helius.dev (optional, Solana only)
 - Update the `command` paths for Python and slither-mcp to match my system
 
-For the Python command path, run `which python` (Unix) or `where python` (Windows) and use that path.
+For the Python command path, run `which python3` (macOS/Linux) or `where python` (Windows) and use that path.
 
-## Step 4: Verify installation
+> If you skipped Step 2 or want to rebuild the RAG database after adding the Solodit key, run:
+> `cd ~/.plamen/custom-mcp/unified-vuln-db && python3 -m unified_vuln.indexer index -s solodit --max-pages 10` (use `python` on Windows)
+
+## Step 5: Verify installation
 
 Run the terminal wrapper to check everything (detect my OS):
 
@@ -116,7 +136,7 @@ Or if already on PATH: `plamen setup`
 
 This shows the toolchain status box. If any optional tools are missing (Foundry, Solana CLI, etc.), the Setup menu can install them automatically.
 
-## Step 4b: Windows — Solana extras
+## Step 5b: Windows — Solana extras
 
 > Skip if you already enabled Developer Mode in Step 0b. Skip entirely if not auditing Solana.
 
@@ -129,7 +149,7 @@ winget install ShiningLight.OpenSSL.Dev
 
 Trident v0.11+ does NOT require honggfuzz or AFL — it uses its own TridentSVM engine and works on all platforms.
 
-## Step 5: Add to PATH (optional)
+## Step 6: Add to PATH (optional)
 
 So I can just type `plamen` from any directory:
 
