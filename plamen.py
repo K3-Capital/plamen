@@ -14,6 +14,22 @@ if sys.platform == "win32":
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 
 # ── Bootstrap: auto-install core deps on first run ──────────
+def _pip_install_args():
+    """Build pip install flags that work on PEP 668 systems (macOS Homebrew, Ubuntu 23.04+)."""
+    args = [sys.executable, "-m", "pip", "install"]
+    if sys.platform != "win32":
+        args.append("--user")
+    # Detect PEP 668 "externally managed" environments
+    try:
+        import sysconfig
+        marker = os.path.join(sysconfig.get_path("stdlib"), "EXTERNALLY-MANAGED")
+        if os.path.isfile(marker):
+            args.append("--break-system-packages")
+    except Exception:
+        pass
+    return args
+
+
 def _bootstrap():
     """Install rich + InquirerPy if missing. Returns True if deps are available."""
     try:
@@ -24,7 +40,7 @@ def _bootstrap():
         if not os.path.isfile(req):
             return False
         print("  Installing Plamen dependencies (first run)...")
-        r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", req])
+        r = subprocess.run(_pip_install_args() + ["-q", "-r", req])
         if r.returncode == 0:
             print("  Done. Restarting...\n")
             os.execv(sys.executable, [sys.executable] + sys.argv)
@@ -554,8 +570,7 @@ _INSTALL_RECIPES = {
 
         ("slither",
          lambda: _find_bin("slither") or _find_bin("slither-mcp"),
-         lambda: ['pip install slither-analyzer'
-                  + (' --user' if sys.platform != "win32" else '')],
+         lambda: [' '.join(_pip_install_args()) + ' slither-analyzer'],
          ["slither"], "~15s", [], None),
 
         ("medusa",
@@ -808,6 +823,10 @@ def _setup_python_deps(w):
       f"  {_C_DARK_GRAY}~2-5 min (PyTorch is ~2GB){_RST}\n\n")
     sys.stdout.flush()
 
+    # Build pip flags that work on PEP 668 systems (macOS Homebrew, Ubuntu 23.04+)
+    pip_flags = " ".join(a for a in _pip_install_args()[3:])  # skip "python -m pip install"
+    pip_base = f'{py} -m pip install {pip_flags}'.rstrip()
+
     all_ok = True
     for label, req in req_files:
         path = os.path.join(base, req)
@@ -816,8 +835,7 @@ def _setup_python_deps(w):
             continue
         w(f"  {_C_ORANGE}>{_RST} {label}\n")
         sys.stdout.flush()
-        user_flag = " --user" if sys.platform != "win32" else ""
-        if not _run_install_cmd(f'{py} -m pip install -r "{path}"{user_flag}', retries=1):
+        if not _run_install_cmd(f'{pip_base} -r "{path}"', retries=1):
             w(f"  {_C_RED}  failed{_RST}\n")
             all_ok = False
         else:
@@ -830,7 +848,7 @@ def _setup_python_deps(w):
             continue
         w(f"  {_C_ORANGE}>{_RST} {label}\n")
         sys.stdout.flush()
-        if not _run_install_cmd(f'{py} -m pip install -e "{path}"', retries=1):
+        if not _run_install_cmd(f'{pip_base} -e "{path}"', retries=1):
             w(f"  {_C_RED}  failed (non-critical){_RST}\n")
         else:
             w(f"  {_C_GREEN}  done{_RST}\n")
