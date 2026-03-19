@@ -221,6 +221,28 @@ cd ~/.plamen && python plamen.py install
 ### Slither install fails on Python 3.13+
 Slither requires Python 3.11 or 3.12. If your default Python is 3.13+, use a virtualenv with 3.12 (see above).
 
+### ChromaDB: `Your system has an unsupported version of sqlite3`
+ChromaDB requires SQLite >= 3.35. Older Python versions or OS builds may bundle an older SQLite. Fixes:
+- **Easiest**: Use Python 3.11+ from [python.org](https://python.org) (bundles recent SQLite)
+- **Linux**: `pip install pysqlite3-binary` then add to your script before importing chromadb:
+  ```python
+  __import__('pysqlite3')
+  import sys
+  sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+  ```
+- **Windows**: Download latest `sqlite3.dll` from [sqlite.org](https://www.sqlite.org/download.html) and replace the one in your Python `DLLs/` folder
+
+### macOS: `Failed to build hnswlib` during pip install
+ChromaDB depends on `hnswlib` which needs a C++ compiler. Install Xcode Command Line Tools first:
+```bash
+xcode-select --install
+```
+If you get `clang: error: the clang compiler does not support '-march=native'`, set:
+```bash
+export HNSWLIB_NO_NATIVE=1
+pip3 install chromadb
+```
+
 ### `externally-managed-environment` error on pip install
 macOS (Homebrew Python) and Ubuntu 23.04+ block bare `pip install`. Plamen handles this automatically by detecting the `EXTERNALLY-MANAGED` marker and adding `--break-system-packages`. If you still hit this error running manual pip commands, add `--break-system-packages` or use a virtualenv.
 
