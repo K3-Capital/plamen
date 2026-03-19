@@ -959,7 +959,7 @@ def _run_symlink_install(w):
             installed.append(mcp_dst)
 
     # 7. Utility files
-    for fname in ("plamen.py", "plamen.sh", "plamen.bat", "VERSION"):
+    for fname in ("plamen", "plamen.py", "plamen.sh", "plamen.bat", "VERSION"):
         src = os.path.join(PLAMEN_HOME, fname)
         if os.path.isfile(src):
             dst = os.path.join(CLAUDE_HOME, fname)
