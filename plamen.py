@@ -13,6 +13,28 @@ if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 
+# ── Bootstrap: auto-install core deps on first run ──────────
+def _bootstrap():
+    """Install rich + InquirerPy if missing. Returns True if deps are available."""
+    try:
+        import rich, InquirerPy  # noqa: F401
+        return True
+    except ImportError:
+        req = os.path.join(os.path.dirname(os.path.realpath(__file__)), "requirements.txt")
+        if not os.path.isfile(req):
+            return False
+        print("  Installing Plamen dependencies (first run)...")
+        r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", req])
+        if r.returncode == 0:
+            print("  Done. Restarting...\n")
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        return False
+
+if not _bootstrap():
+    print("Error: Could not install dependencies. Run manually:")
+    print(f"  {sys.executable} -m pip install rich InquirerPy")
+    sys.exit(1)
+
 from rich.console import Console
 from rich.text import Text
 from rich.rule import Rule

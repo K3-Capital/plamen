@@ -18,12 +18,16 @@ Orchestrates 15-95 AI agents across 8 phases to produce audit reports with verif
 
 ## Install
 
-### Option A: Terminal (recommended)
+### Option A: Let Claude set it up (recommended)
 
-**Linux / macOS / Git Bash:**
+Open Claude Code and paste the contents of [`SETUP.md`](SETUP.md). Claude handles cloning, symlink installation, dependency setup, and RAG database building automatically.
+
+### Option B: Terminal
+
+**Linux / macOS:**
 ```bash
 git clone https://github.com/PlamenTSV/plamen.git ~/.plamen
-cd ~/.plamen && python plamen.py install
+cd ~/.plamen && python3 plamen.py install
 ```
 
 **Windows (PowerShell):**
@@ -31,6 +35,8 @@ cd ~/.plamen && python plamen.py install
 git clone https://github.com/PlamenTSV/plamen.git $HOME\.plamen
 cd $HOME\.plamen; python plamen.py install
 ```
+
+> Python dependencies (`rich`, `InquirerPy`, etc.) are installed automatically on first run. On macOS/Linux use `python3`, on Windows use `python`.
 
 After install, add to PATH so you can run `plamen` from anywhere:
 
@@ -77,22 +83,18 @@ The Plamen repo stays at `~/.plamen`. The installer creates symlinks (shortcuts)
 
 > **Migrating from v1.0.x** (installed directly in `~/.claude`): Close Claude Code first, then run both commands together:
 >
-> Linux/macOS: `mv ~/.claude ~/.plamen && cd ~/.plamen && python plamen.py install`
+> Linux/macOS: `mv ~/.claude ~/.plamen && cd ~/.plamen && python3 plamen.py install`
 >
 > Windows (PowerShell): `Rename-Item $HOME\.claude $HOME\.plamen; cd $HOME\.plamen; python plamen.py install`
 >
 > This moves the repo to `~/.plamen` and immediately recreates `~/.claude` with symlinks + merged config. Claude Code will not work between the move and install — run them together.
-
-### Option B: Let Claude set it up
-
-Open Claude Code and paste the contents of [`SETUP.md`](SETUP.md). It handles everything including dependency installation.
 
 ### Option C: Manual dependency install
 
 <details>
 <summary>Click to expand (~5-10 min)</summary>
 
-> Option A handles this automatically. These commands are for reference only.
+> Option B handles this automatically. These commands are for reference only.
 
 ```bash
 cd ~/.plamen

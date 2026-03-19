@@ -44,7 +44,9 @@ Without Developer Mode, the installer will create directory junctions (which wor
 
 ## Step 1: Clone the repository
 
-**Linux / macOS / Git Bash:**
+Detect my OS and run the appropriate commands:
+
+**Linux / macOS:**
 ```bash
 git clone https://github.com/PlamenTSV/plamen.git ~/.plamen
 cd ~/.plamen
@@ -62,11 +64,19 @@ git submodule update --init --recursive
 
 ## Step 2: Run the installer
 
+Detect my OS and run the appropriate command:
+
+**Linux / macOS:**
 ```bash
-python plamen.py install
+cd ~/.plamen && python3 plamen.py install
 ```
 
-Or if `~/.plamen` is already on PATH: `plamen install`
+**Windows:**
+```powershell
+cd $HOME\.plamen; python plamen.py install
+```
+
+> Python dependencies (`rich`, `InquirerPy`, PyTorch, etc.) are installed automatically on first run. On macOS/Linux use `python3`, on Windows use `python`.
 
 This will:
 - Symlink Plamen's agents, rules, prompts, skills, and commands into `~/.claude/`
@@ -90,9 +100,16 @@ For the Python command path, run `which python` (Unix) or `where python` (Window
 
 ## Step 4: Verify installation
 
-Run the terminal wrapper to check everything:
+Run the terminal wrapper to check everything (detect my OS):
+
+**Linux / macOS:**
 ```bash
-cd ~/.plamen && python plamen.py setup
+cd ~/.plamen && python3 plamen.py setup
+```
+
+**Windows:**
+```powershell
+cd $HOME\.plamen; python plamen.py setup
 ```
 
 Or if already on PATH: `plamen setup`
@@ -131,4 +148,4 @@ source ~/.bashrc
 
 After setup, I can start an audit by typing `plamen` in my terminal or `/plamen` inside Claude Code.
 
-To uninstall later: `plamen uninstall` (or `cd ~/.plamen && python plamen.py uninstall`)
+To uninstall later: `plamen uninstall` (or `cd ~/.plamen && python3 plamen.py uninstall` on macOS/Linux, `python plamen.py uninstall` on Windows)
