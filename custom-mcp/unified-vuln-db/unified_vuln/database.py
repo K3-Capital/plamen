@@ -20,13 +20,17 @@ from .schema import Vulnerability, Source
 console = Console()
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PATHS - Centralized in ~/.claude for portability
+# PATHS - Resolved relative to the Plamen repo root
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# All data lives in ~/.claude/unified-vuln-db/data/
-# This keeps DB with other Claude files for easy backup/migration
-CLAUDE_DIR = Path.home() / ".claude"
-DATA_DIR = CLAUDE_DIR / "unified-vuln-db" / "data"
+# Resolve repo root from this file's location:
+#   database.py is at: <repo>/custom-mcp/unified-vuln-db/unified_vuln/database.py
+#   parents: [0]=unified_vuln, [1]=unified-vuln-db, [2]=custom-mcp, [3]=repo root
+_REPO_ROOT = Path(os.environ.get(
+    "PLAMEN_HOME",
+    str(Path(__file__).resolve().parents[3])
+))
+DATA_DIR = _REPO_ROOT / "unified-vuln-db" / "data"
 CHROMA_DIR = DATA_DIR / "chroma_db"
 COLLECTION_NAME = "vulnerabilities_v2"
 

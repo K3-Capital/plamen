@@ -15,20 +15,29 @@ Interactive UI with dependency checking, tool installation, cost estimation, and
 ```bash
 plamen core /path/to/project --docs whitepaper.pdf
 plamen thorough /path/to/project --scope scope.txt --network ethereum --proven-only
-plamen setup                        # just install tools + build RAG
+plamen setup                        # install tools + build RAG
+plamen rag                          # rebuild RAG database only
+plamen uninstall                    # remove Plamen from ~/.claude
 ```
+
+> **Important**: Always use `plamen` (not `python3 plamen.py`) after PATH is set. The `python3 plamen.py` form only works from inside `~/.plamen/`.
 
 **PATH setup** (to use `plamen` as a command):
 
 ```bash
-# Unix/macOS -- add to ~/.bashrc or ~/.zshrc
-export PATH="$HOME/.claude:$PATH"
+# Linux (bash)
+echo 'export PATH="$HOME/.plamen:$PATH"' >> ~/.bashrc && source ~/.bashrc
 
-# Windows -- run once in PowerShell
-[System.Environment]::SetEnvironmentVariable("Path", "$env:USERPROFILE\.claude;" + $env:Path, "User")
+# macOS (zsh — default shell on macOS)
+echo 'export PATH="$HOME/.plamen:$PATH"' >> ~/.zshrc && source ~/.zshrc
 ```
 
-Or run directly: `python ~/.claude/plamen.py`
+```powershell
+# Windows (PowerShell, one-time)
+[System.Environment]::SetEnvironmentVariable("Path", "$env:USERPROFILE\.plamen;" + $env:Path, "User")
+```
+
+Or run directly: `python3 ~/.plamen/plamen.py` (macOS/Linux) or `python ~/.plamen/plamen.py` (Windows)
 
 ### Option B: Inside Claude Code
 

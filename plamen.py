@@ -13,6 +13,28 @@ if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 
+# ── Bootstrap: auto-install core deps on first run ──────────
+def _bootstrap():
+    """Install rich + InquirerPy if missing. Returns True if deps are available."""
+    try:
+        import rich, InquirerPy  # noqa: F401
+        return True
+    except ImportError:
+        req = os.path.join(os.path.dirname(os.path.realpath(__file__)), "requirements.txt")
+        if not os.path.isfile(req):
+            return False
+        print("  Installing Plamen dependencies (first run)...")
+        r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", req])
+        if r.returncode == 0:
+            print("  Done. Restarting...\n")
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        return False
+
+if not _bootstrap():
+    print("Error: Could not install dependencies. Run manually:")
+    print(f"  {sys.executable} -m pip install rich InquirerPy")
+    sys.exit(1)
+
 from rich.console import Console
 from rich.text import Text
 from rich.rule import Rule
@@ -20,9 +42,15 @@ from InquirerPy import inquirer
 from InquirerPy.separator import Separator
 from InquirerPy.utils import InquirerPyStyle
 
+# ── Paths ───────────────────────────────────────────────────
+# PLAMEN_HOME: where the Plamen repo actually lives (resolves through symlinks)
+# CLAUDE_HOME: where Claude Code reads config from (always ~/.claude)
+PLAMEN_HOME = os.path.dirname(os.path.realpath(__file__))
+CLAUDE_HOME = os.path.expanduser("~/.claude")
+
 # ── Version ─────────────────────────────────────────────────
 def _read_version() -> str:
-    vfile = os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION")
+    vfile = os.path.join(PLAMEN_HOME, "VERSION")
     try:
         with open(vfile) as f:
             return f.read().strip()
@@ -163,7 +191,7 @@ def _box_row(w, bx: str, W: int, content: str, right: str = ""):
 
 def _probe_rag_db() -> int:
     """Return the number of entries in the RAG vulnerability database, or -1 if not found."""
-    db_path = os.path.expanduser("~/.claude/unified-vuln-db/data/chroma_db/chroma.sqlite3")
+    db_path = os.path.join(PLAMEN_HOME, "unified-vuln-db", "data", "chroma_db", "chroma.sqlite3")
     if not os.path.isfile(db_path):
         return -1
     try:
@@ -468,7 +496,7 @@ def _foundry_cmds():
 
 def _solana_cmds():
     if sys.platform == "win32":
-        script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+        script = os.path.join(PLAMEN_HOME,
                               "_solana_installer.py").replace('\\', '/')
         return [f'python "{script}"']
     return ['sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"']
@@ -478,7 +506,7 @@ def _anchor_cmds():
     if sys.platform == "win32":
         # Download prebuilt AVM from GitHub, then use AVM to install Anchor
         # AVM downloads prebuilt anchor binaries since v0.31.0
-        script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+        script = os.path.join(PLAMEN_HOME,
                               "_avm_installer.py").replace('\\', '/')
         return [f'python "{script}"',
                 'avm install latest',
@@ -505,7 +533,7 @@ def _sui_cmds():
     if sys.platform == "win32":
         # Pure Python: download zip from GitHub releases, extract, place in ~/.local/bin
         # No bash/sh needed — works in cmd.exe and PowerShell
-        script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+        script = os.path.join(PLAMEN_HOME,
                               "_sui_installer.py").replace('\\', '/')
         return [f'python "{script}"',
                 'echo y | suiup install sui@testnet',
@@ -688,7 +716,7 @@ def _rag_needs_build() -> bool:
 
 def _build_rag_db(w):
     """Run the RAG indexer pipeline. Returns True on success."""
-    vuln_db_dir = os.path.expanduser("~/.claude/custom-mcp/unified-vuln-db")
+    vuln_db_dir = os.path.join(PLAMEN_HOME, "custom-mcp", "unified-vuln-db")
     if not os.path.isdir(vuln_db_dir):
         w(f"  {_C_RED}unified-vuln-db not found at {vuln_db_dir}{_RST}\n")
         return False
@@ -740,7 +768,7 @@ def _quick_check_required() -> bool:
 
 def _setup_python_deps(w):
     """Install all Python dependencies if missing. Returns True if all installed."""
-    base = os.path.expanduser("~/.claude")
+    base = PLAMEN_HOME
     py = _python_bin()
     req_files = [
         ("Plamen wrapper", "requirements.txt"),
@@ -750,6 +778,7 @@ def _setup_python_deps(w):
         ("farofino-mcp", "custom-mcp/farofino-mcp/requirements.txt"),
     ]
     editable_pkgs = [
+        ("unified-vuln-db", "custom-mcp/unified-vuln-db"),
         ("solana-fender", "custom-mcp/solana-fender"),
         ("slither-mcp (EVM)", "custom-mcp/slither-mcp"),
     ]
@@ -811,40 +840,414 @@ def _setup_python_deps(w):
 
 
 def _setup_config_files(w):
-    """Copy mcp.json.example and settings.json.example if the real files don't exist."""
-    base = os.path.expanduser("~/.claude")
-    configs = [
-        ("mcp.json", "mcp.json.example"),
-        ("settings.json", "settings.json.example"),
-    ]
-    for target, source in configs:
-        target_path = os.path.join(base, target)
-        source_path = os.path.join(base, source)
-        if os.path.isfile(target_path):
-            w(f"  {_C_GREEN}{target} already exists{_RST}\n")
-        elif os.path.isfile(source_path):
-            import shutil
-            shutil.copy2(source_path, target_path)
-            w(f"  {_C_GREEN}{target} created from {source}{_RST}\n")
-            if target == "mcp.json":
-                w(f"  {_C_GRAY}  Edit ~/.claude/mcp.json to add your API keys{_RST}\n")
-                w(f"  {_C_GRAY}  Free keys: solodit.cyfrin.io, etherscan.io/apis, tavily.com{_RST}\n")
-        else:
-            w(f"  {_C_ORANGE}{source} not found — skipping {target}{_RST}\n")
+    """Merge Plamen's config into Claude Code's ~/.claude/ (additive, non-destructive)."""
+    _merge_settings_json(w)
+    _merge_mcp_json(w)
+    _merge_claude_md(w)
     w("\n")
+
+
+# ── Symlink install / uninstall ─────────────────────────────
+
+# Files tracked by the installer manifest
+_PLAMEN_MANIFEST = ".plamen-manifest.json"
+_CLAUDE_MD_START = "<!-- PLAMEN:START — managed by plamen install, do not edit -->"
+_CLAUDE_MD_END = "<!-- PLAMEN:END -->"
+
+
+def _is_junction(path):
+    """Check if path is a Windows junction (reparse point). os.path.islink misses these."""
+    if sys.platform != "win32" or not os.path.isdir(path):
+        return False
+    try:
+        import ctypes
+        attrs = ctypes.windll.kernel32.GetFileAttributesW(str(path))
+        return attrs != -1 and bool(attrs & 0x400)  # FILE_ATTRIBUTE_REPARSE_POINT
+    except Exception:
+        return False
+
+
+def _safe_link(src, dst, w):
+    """Create a symlink (or junction on Windows dirs). Back up existing non-link targets."""
+    if os.path.islink(dst) or _is_junction(dst):
+        # Existing symlink or junction — remove and recreate (idempotent re-install)
+        if os.path.isdir(dst) and not os.path.islink(dst):
+            os.rmdir(dst)  # junctions are removed with rmdir, not shutil.rmtree
+        else:
+            os.remove(dst)
+    elif os.path.exists(dst):
+        backup = dst + ".pre-plamen"
+        if not os.path.exists(backup):
+            shutil.move(dst, backup)
+            w(f"  {_C_GRAY}  backed up {os.path.basename(dst)} → {os.path.basename(backup)}{_RST}\n")
+        else:
+            w(f"  {_C_ORANGE}  skipped {os.path.basename(dst)} — backup already exists{_RST}\n")
+            return False
+
+    try:
+        is_dir = os.path.isdir(src)
+        if sys.platform == "win32" and is_dir:
+            # Junctions don't need admin privileges on Windows
+            subprocess.run(["cmd", "/c", "mklink", "/J", dst, src],
+                           check=True, capture_output=True)
+        else:
+            os.symlink(src, dst, target_is_directory=is_dir)
+        return True
+    except OSError as e:
+        w(f"  {_C_RED}  failed to link {os.path.basename(dst)}: {e}{_RST}\n")
+        if sys.platform == "win32" and "privilege" in str(e).lower():
+            w(f"  {_C_GRAY}  Enable Developer Mode: Settings > System > For Developers{_RST}\n")
+        return False
+
+
+def _run_symlink_install(w):
+    """Create symlinks from Plamen repo into ~/.claude/ for Claude Code discovery."""
+    os.makedirs(CLAUDE_HOME, exist_ok=True)
+    installed = []
+
+    # 1. Agent definition files (individual — user may have own agents)
+    agents_dir = os.path.join(CLAUDE_HOME, "agents")
+    os.makedirs(agents_dir, exist_ok=True)
+    w(f"  {_C_ORANGE}>{_RST} Linking agent definitions\n")
+    for f in sorted(glob.glob(os.path.join(PLAMEN_HOME, "agents", "*.md"))):
+        dst = os.path.join(agents_dir, os.path.basename(f))
+        if _safe_link(f, dst, w):
+            installed.append(dst)
+
+    # 2. Skills directory (Plamen-only)
+    skills_src = os.path.join(PLAMEN_HOME, "agents", "skills")
+    skills_dst = os.path.join(agents_dir, "skills")
+    if os.path.isdir(skills_src):
+        w(f"  {_C_ORANGE}>{_RST} Linking skills\n")
+        if _safe_link(skills_src, skills_dst, w):
+            installed.append(skills_dst)
+
+    # 3. Slash command (individual — user may have own commands)
+    commands_dir = os.path.join(CLAUDE_HOME, "commands")
+    os.makedirs(commands_dir, exist_ok=True)
+    cmd_src = os.path.join(PLAMEN_HOME, "commands", "plamen.md")
+    if os.path.isfile(cmd_src):
+        w(f"  {_C_ORANGE}>{_RST} Linking /plamen command\n")
+        dst = os.path.join(commands_dir, "plamen.md")
+        if _safe_link(cmd_src, dst, w):
+            installed.append(dst)
+
+    # 4. Rule files (individual — user may have own rules)
+    rules_dir = os.path.join(CLAUDE_HOME, "rules")
+    os.makedirs(rules_dir, exist_ok=True)
+    rule_files = sorted(glob.glob(os.path.join(PLAMEN_HOME, "rules", "*.md")))
+    if rule_files:
+        w(f"  {_C_ORANGE}>{_RST} Linking rules ({len(rule_files)} files)\n")
+        for f in rule_files:
+            dst = os.path.join(rules_dir, os.path.basename(f))
+            if _safe_link(f, dst, w):
+                installed.append(dst)
+
+    # 5. Prompts directory (Plamen-only — per-language prompt trees)
+    prompts_src = os.path.join(PLAMEN_HOME, "prompts")
+    prompts_dst = os.path.join(CLAUDE_HOME, "prompts")
+    if os.path.isdir(prompts_src):
+        w(f"  {_C_ORANGE}>{_RST} Linking prompts\n")
+        if _safe_link(prompts_src, prompts_dst, w):
+            installed.append(prompts_dst)
+
+    # 6. Custom MCP server source (Plamen-only)
+    mcp_src = os.path.join(PLAMEN_HOME, "custom-mcp")
+    mcp_dst = os.path.join(CLAUDE_HOME, "custom-mcp")
+    if os.path.isdir(mcp_src):
+        w(f"  {_C_ORANGE}>{_RST} Linking MCP servers\n")
+        if _safe_link(mcp_src, mcp_dst, w):
+            installed.append(mcp_dst)
+
+    # 7. Utility files
+    for fname in ("plamen", "plamen.py", "plamen.sh", "plamen.bat", "VERSION"):
+        src = os.path.join(PLAMEN_HOME, fname)
+        if os.path.isfile(src):
+            dst = os.path.join(CLAUDE_HOME, fname)
+            if _safe_link(src, dst, w):
+                installed.append(dst)
+
+    # 8. Write install manifest
+    import json as _json
+    manifest = {
+        "plamen_home": PLAMEN_HOME,
+        "version": VERSION,
+        "installed": installed,
+    }
+    manifest_path = os.path.join(CLAUDE_HOME, _PLAMEN_MANIFEST)
+    with open(manifest_path, "w") as f:
+        _json.dump(manifest, f, indent=2)
+
+    w(f"\n  {_C_GREEN}Linked {len(installed)} items into {CLAUDE_HOME}{_RST}\n\n")
+
+
+def _merge_settings_json(w):
+    """Merge Plamen's permissions and env into ~/.claude/settings.json (additive only)."""
+    import json as _json
+
+    example = os.path.join(PLAMEN_HOME, "settings.json.example")
+    target = os.path.join(CLAUDE_HOME, "settings.json")
+
+    if not os.path.isfile(example):
+        w(f"  {_C_ORANGE}settings.json.example not found — skipping{_RST}\n")
+        return
+
+    with open(example) as f:
+        plamen = _json.load(f)
+
+    existing = {}
+    if os.path.isfile(target):
+        with open(target) as f:
+            existing = _json.load(f)
+
+    # Merge env vars (additive — don't overwrite existing keys)
+    plamen_env = plamen.get("env", {})
+    existing.setdefault("env", {})
+    added_env = []
+    for k, v in plamen_env.items():
+        if k not in existing["env"]:
+            existing["env"][k] = v
+            added_env.append(k)
+
+    # Merge permissions (union of allow/deny lists)
+    plamen_perms = plamen.get("permissions", {})
+    existing.setdefault("permissions", {})
+    for key in ("allow", "deny"):
+        plamen_list = plamen_perms.get(key, [])
+        existing_list = existing["permissions"].get(key, [])
+        merged = list(dict.fromkeys(existing_list + plamen_list))
+        existing["permissions"][key] = merged
+
+    if "defaultMode" not in existing["permissions"]:
+        existing["permissions"]["defaultMode"] = plamen_perms.get("defaultMode", "acceptEdits")
+
+    with open(target, "w") as f:
+        _json.dump(existing, f, indent=2)
+        f.write("\n")
+
+    w(f"  {_C_GREEN}settings.json: merged permissions + env{_RST}\n")
+
+
+def _merge_mcp_json(w):
+    """Merge Plamen's MCP servers into ~/.claude/mcp.json (additive only)."""
+    import json as _json
+
+    example = os.path.join(PLAMEN_HOME, "mcp.json.example")
+    target = os.path.join(CLAUDE_HOME, "mcp.json")
+
+    if not os.path.isfile(example):
+        w(f"  {_C_ORANGE}mcp.json.example not found — skipping{_RST}\n")
+        return
+
+    with open(example) as f:
+        plamen = _json.load(f)
+
+    # Resolve relative cwd paths to absolute (pointing to real repo location)
+    for _name, config in plamen.get("mcpServers", {}).items():
+        if "cwd" in config and config["cwd"].startswith("./"):
+            config["cwd"] = os.path.join(PLAMEN_HOME, config["cwd"][2:])
+
+    existing = {"mcpServers": {}}
+    if os.path.isfile(target):
+        with open(target) as f:
+            existing = _json.load(f)
+        existing.setdefault("mcpServers", {})
+
+    added, skipped = [], []
+    for name, config in plamen.get("mcpServers", {}).items():
+        if name in existing["mcpServers"]:
+            skipped.append(name)
+        else:
+            existing["mcpServers"][name] = config
+            added.append(name)
+
+    with open(target, "w") as f:
+        _json.dump(existing, f, indent=2)
+        f.write("\n")
+
+    if added:
+        w(f"  {_C_GREEN}mcp.json: added {', '.join(added)}{_RST}\n")
+    if skipped:
+        w(f"  {_C_GRAY}mcp.json: kept existing {', '.join(skipped)}{_RST}\n")
+    if not added and not skipped:
+        w(f"  {_C_GREEN}mcp.json: up to date{_RST}\n")
+
+    # Remind about API keys for newly added servers
+    needs_keys = [n for n in added if any(
+        "YOUR_" in str(v) for v in (plamen.get("mcpServers", {}).get(n, {}).get("env", {})).values()
+    )]
+    if needs_keys:
+        w(f"  {_C_GRAY}  Edit {target} to add API keys for: {', '.join(needs_keys)}{_RST}\n")
+        w(f"  {_C_GRAY}  Free keys: solodit.cyfrin.io, etherscan.io/apis, tavily.com{_RST}\n")
+
+
+def _merge_claude_md(w):
+    """Inject Plamen's CLAUDE.md into ~/.claude/CLAUDE.md between markers."""
+    plamen_md = os.path.join(PLAMEN_HOME, "CLAUDE.md")
+    target = os.path.join(CLAUDE_HOME, "CLAUDE.md")
+
+    if not os.path.isfile(plamen_md):
+        w(f"  {_C_ORANGE}CLAUDE.md not found in repo — skipping{_RST}\n")
+        return
+
+    with open(plamen_md, "r", encoding="utf-8") as f:
+        plamen_content = f.read().strip()
+
+    existing = ""
+    if os.path.isfile(target):
+        with open(target, "r", encoding="utf-8") as f:
+            existing = f.read()
+
+    # Remove any prior Plamen section
+    if _CLAUDE_MD_START in existing:
+        if _CLAUDE_MD_END in existing:
+            before = existing[:existing.index(_CLAUDE_MD_START)]
+            after_end = existing.index(_CLAUDE_MD_END) + len(_CLAUDE_MD_END)
+            after = existing[after_end:]
+            existing = before.rstrip("\n") + after.lstrip("\n")
+        else:
+            # End marker missing (user corrupted file) — strip from start marker to EOF
+            existing = existing[:existing.index(_CLAUDE_MD_START)].rstrip("\n")
+
+    # Append Plamen section with markers
+    injected = f"\n\n{_CLAUDE_MD_START}\n{plamen_content}\n{_CLAUDE_MD_END}\n"
+
+    with open(target, "w", encoding="utf-8") as f:
+        f.write(existing.rstrip("\n") + injected)
+
+    w(f"  {_C_GREEN}CLAUDE.md: injected Plamen instructions (with markers){_RST}\n")
+
+
+def run_uninstall():
+    """Remove Plamen symlinks and injected config from ~/.claude/."""
+    import json as _json
+    w = sys.stdout.write
+
+    manifest_path = os.path.join(CLAUDE_HOME, _PLAMEN_MANIFEST)
+    if not os.path.isfile(manifest_path):
+        w(f"  {_C_ORANGE}No install manifest found at {manifest_path}{_RST}\n")
+        w(f"  {_C_GRAY}Nothing to uninstall.{_RST}\n")
+        return
+
+    with open(manifest_path) as f:
+        manifest = _json.load(f)
+
+    n_items = len(manifest.get("installed", []))
+    w(f"\n  {_C_WHITE}This will remove {n_items} symlinks from {CLAUDE_HOME}{_RST}\n")
+    w(f"  {_C_GRAY}and undo config merges (settings.json, mcp.json, CLAUDE.md).{_RST}\n")
+    w(f"  {_C_GRAY}Backups (.pre-plamen) will be restored if they exist.{_RST}\n")
+    w(f"  {_C_GRAY}The Plamen repo at {PLAMEN_HOME} will NOT be deleted.{_RST}\n\n")
+    sys.stdout.flush()
+
+    confirm = inquirer.select(
+        message="Proceed with uninstall?",
+        choices=[
+            {"name": "Yes, uninstall Plamen", "value": True},
+            {"name": "Cancel", "value": False},
+        ],
+        default=False,
+        pointer="  >",
+        style=_STYLE,
+        qmark=">",
+        amark="✓",
+    ).execute()
+
+    if not confirm:
+        w(f"  {_C_DARK_GRAY}Cancelled.{_RST}\n")
+        return
+
+    removed = 0
+    restored = 0
+    for path in manifest.get("installed", []):
+        is_link = os.path.islink(path) or _is_junction(path)
+        if is_link:
+            if os.path.isdir(path) and not os.path.islink(path):
+                os.rmdir(path)  # junction
+            else:
+                os.remove(path)  # symlink
+            removed += 1
+            backup = path + ".pre-plamen"
+            if os.path.exists(backup):
+                shutil.move(backup, path)
+                restored += 1
+
+    # Remove CLAUDE.md injection
+    claude_md = os.path.join(CLAUDE_HOME, "CLAUDE.md")
+    if os.path.isfile(claude_md):
+        with open(claude_md, "r", encoding="utf-8") as f:
+            content = f.read()
+        if _CLAUDE_MD_START in content:
+            if _CLAUDE_MD_END in content:
+                before = content[:content.index(_CLAUDE_MD_START)]
+                after_end = content.index(_CLAUDE_MD_END) + len(_CLAUDE_MD_END)
+                after = content[after_end:]
+                cleaned = before.rstrip("\n") + after.lstrip("\n")
+            else:
+                # End marker missing — strip from start marker to EOF
+                cleaned = content[:content.index(_CLAUDE_MD_START)].rstrip("\n")
+            with open(claude_md, "w", encoding="utf-8") as f:
+                f.write(cleaned if cleaned.strip() else "")
+            w(f"  {_C_GREEN}CLAUDE.md: removed Plamen section{_RST}\n")
+
+    # Remove Plamen entries from settings.json
+    settings_path = os.path.join(CLAUDE_HOME, "settings.json")
+    if os.path.isfile(settings_path):
+        with open(settings_path) as f:
+            settings = _json.load(f)
+        example = os.path.join(PLAMEN_HOME, "settings.json.example")
+        if os.path.isfile(example):
+            with open(example) as f:
+                plamen_settings = _json.load(f)
+            # Remove Plamen-specific permissions
+            for key in ("allow", "deny"):
+                plamen_list = plamen_settings.get("permissions", {}).get(key, [])
+                current = settings.get("permissions", {}).get(key, [])
+                settings["permissions"][key] = [x for x in current if x not in plamen_list]
+            # Remove Plamen env vars
+            for k in plamen_settings.get("env", {}):
+                settings.get("env", {}).pop(k, None)
+            with open(settings_path, "w") as f:
+                _json.dump(settings, f, indent=2)
+                f.write("\n")
+            w(f"  {_C_GREEN}settings.json: removed Plamen entries{_RST}\n")
+
+    # Remove Plamen MCP servers from mcp.json
+    mcp_path = os.path.join(CLAUDE_HOME, "mcp.json")
+    if os.path.isfile(mcp_path):
+        with open(mcp_path) as f:
+            mcp = _json.load(f)
+        example = os.path.join(PLAMEN_HOME, "mcp.json.example")
+        if os.path.isfile(example):
+            with open(example) as f:
+                plamen_mcp = _json.load(f)
+            for name in plamen_mcp.get("mcpServers", {}):
+                mcp.get("mcpServers", {}).pop(name, None)
+            with open(mcp_path, "w") as f:
+                _json.dump(mcp, f, indent=2)
+                f.write("\n")
+            w(f"  {_C_GREEN}mcp.json: removed Plamen servers{_RST}\n")
+
+    os.remove(manifest_path)
+
+    w(f"\n  {_C_GREEN}Uninstalled: {removed} links removed, {restored} backups restored{_RST}\n")
+    w(f"  {_C_GRAY}Plamen repo at {PLAMEN_HOME} is untouched.{_RST}\n\n")
 
 
 def run_setup():
     """Full setup flow: Python deps → config files → toolchain → RAG → re-check."""
     w = sys.stdout.write
 
+    # ── Symlink install (if repo is not directly in ~/.claude) ─
+    if os.path.normpath(PLAMEN_HOME) != os.path.normpath(CLAUDE_HOME):
+        console.print(Rule(title="Linking into Claude Code", style="color(238)"))
+        _run_symlink_install(w)
+
     # ── Submodules ─────────────────────────────────────────────
-    base = os.path.expanduser("~/.claude")
-    slither_dir = os.path.join(base, "custom-mcp", "slither-mcp")
+    slither_dir = os.path.join(PLAMEN_HOME, "custom-mcp", "slither-mcp")
     if os.path.isdir(slither_dir) and not os.listdir(slither_dir):
         w(f"  {_C_ORANGE}>{_RST} Initializing git submodules...\n")
         sys.stdout.flush()
-        _run_install_cmd(f'cd "{base}" && git submodule update --init --recursive', retries=1)
+        _run_install_cmd(f'cd "{PLAMEN_HOME}" && git submodule update --init --recursive', retries=1)
         w("\n")
 
     # ── Python dependencies ───────────────────────────────────
@@ -870,9 +1273,11 @@ def run_setup():
             missing[group] = group_missing
 
     rag_empty = _rag_needs_build()
+    rag_count = _probe_rag_db()
 
-    if not missing and not rag_empty:
-        w(f"  {_C_GREEN}Everything is set up.{_RST}\n\n")
+    if not missing and rag_count > 0 and not rag_empty:
+        w(f"  {_C_GREEN}Everything is set up ({rag_count:,} RAG entries).{_RST}\n")
+        w(f"  {_C_GRAY}To rebuild RAG: plamen rag{_RST}\n\n")
         return
 
     # ── Build checkbox choices with time estimates ───────────
@@ -883,6 +1288,9 @@ def run_setup():
 
     if rag_empty:
         item_choices.append({"name": "RAG DB   vulnerability knowledge base",
+                             "value": "__rag__"})
+    elif rag_count > 0:
+        item_choices.append({"name": f"RAG DB   rebuild/extend ({rag_count:,} entries currently)",
                              "value": "__rag__"})
 
     all_values = [c["value"] for c in item_choices]
@@ -1782,6 +2190,31 @@ def main():
     if len(sys.argv) > 1:
         arg = sys.argv[1].lower()
 
+        # ── Help ──────────────────────────────────────────────
+        if arg in ("help", "--help", "-h"):
+            w = sys.stdout.write
+            show_banner()
+            w(f"  {_C_WHITE}Usage:{_RST}\n")
+            w(f"    {_C_ORANGE}plamen{_RST}                              Interactive wizard\n")
+            w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}core{_RST} /path/to/project        Audit in Core mode\n")
+            w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}thorough{_RST} /path/to/project    Audit in Thorough mode\n")
+            w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}light{_RST} /path/to/project       Audit in Light mode\n")
+            w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}compare{_RST}                      Diff reports\n")
+            w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}setup{_RST}                        Install tools + build RAG\n")
+            w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}rag{_RST}                          Rebuild RAG database only\n")
+            w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}uninstall{_RST}                    Remove from ~/.claude\n")
+            w(f"\n  {_C_WHITE}Options (for audit modes):{_RST}\n")
+            w(f"    {_C_GRAY}--docs{_RST} PATH              Whitepaper or spec file\n")
+            w(f"    {_C_GRAY}--scope{_RST} PATH             Scope file listing contracts\n")
+            w(f"    {_C_GRAY}--notes{_RST} TEXT             Scope notes (free text)\n")
+            w(f"    {_C_GRAY}--network{_RST} NAME           Target network (ethereum, arbitrum, etc.)\n")
+            w(f"    {_C_GRAY}--proven-only{_RST}            Cap unproven findings at Low severity\n")
+            w(f"\n  {_C_WHITE}Inside Claude Code:{_RST}\n")
+            w(f"    {_C_GRAY}/plamen{_RST}                          Interactive wizard\n")
+            w(f"    {_C_GRAY}/plamen core{_RST} docs: file.pdf      With options\n")
+            w(f"\n")
+            return
+
         # ── Estimate subcommand (for /plamen command) ────────
         if arg == "--estimate":
             import json as _json
@@ -1798,10 +2231,23 @@ def main():
             print(_json.dumps(r))
             return
 
-        # ── Install subcommand ───────────────────────────────
+        # ── Install / uninstall subcommands ───────────────────
         if arg in ("install", "setup"):
             show_banner()
             run_setup()
+            return
+
+        if arg == "uninstall":
+            show_banner()
+            run_uninstall()
+            return
+
+        if arg == "rag":
+            show_banner()
+            w = sys.stdout.write
+            w(f"\n  {_BOLD}{_C_WHITE}Building RAG vulnerability database...{_RST}\n\n")
+            sys.stdout.flush()
+            _build_rag_db(w)
             return
 
         if arg in ("light", "core", "thorough", "compare"):

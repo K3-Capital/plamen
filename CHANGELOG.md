@@ -5,6 +5,30 @@ All notable changes to Plamen will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6] - 2026-03-19
+
+### Changed
+- **Non-destructive install**: Plamen now clones to `~/.plamen` instead of `~/.claude`, preserving existing Claude Code configuration. The installer creates symlinks into `~/.claude/` and merges configs additively (settings.json, mcp.json, CLAUDE.md with markers). Closes #3.
+- **macOS/Linux support**: All commands use `python3` (not `python`). PATH setup targets `~/.zshrc` on macOS and `~/.bashrc` on Linux.
+- **Windows support**: Clone to `$HOME\.plamen` (PowerShell). Directory junctions (no admin needed) for dirs, Developer Mode required for file symlinks. Documented in all setup guides.
+
+### Added
+- **Bootstrap auto-install**: `plamen.py` detects missing `rich`/`InquirerPy` on first run and installs them automatically before importing. No more `ModuleNotFoundError` on fresh installs.
+- **`plamen rag` command**: Rebuild the RAG database without running full setup. Setup wizard now always shows RAG rebuild option even when database has entries.
+- **`plamen help` / `plamen --help`**: Shows all available commands and options.
+- **`plamen uninstall` confirmation**: Interactive prompt before removing symlinks and config entries.
+- **`plamen` extensionless launcher**: Unix shells find `plamen` on PATH (previously only `plamen.sh` existed, which required typing the extension).
+- **Install manifest**: `.plamen-manifest.json` tracks all installed symlinks for clean uninstall with `.pre-plamen` backup restoration.
+
+### Fixed
+- **einops missing from requirements**: `nomic-embed-text-v1.5` silently fell back to `all-MiniLM-L6-v2` (384 dims vs 768). Added `einops>=0.7.0` to unified-vuln-db requirements.
+- **unified-vuln-db not globally importable**: `pip install -e` was missing, so `python3 -m unified_vuln.indexer` only worked from inside the package directory. Now installed as editable package during setup.
+- **Solodit API key ordering**: Setup docs now set `SOLODIT_API_KEY` before running the installer, preventing silent Solodit indexing failure on first install.
+- **3x `os.path.abspath` → `PLAMEN_HOME`**: Setup helper scripts (_solana_installer.py, _avm_installer.py, _sui_installer.py) failed when run through symlinks.
+- **Solana skill count**: skill-index.md said 19, actual count is 20 (stale from v1.0.3 Trident addition).
+- **"Info" vs "Informational"**: finding-output-format.md now matches report-template.md label.
+- **CLAUDE.md marker guard**: Missing `<!-- PLAMEN:END -->` no longer crashes install/uninstall.
+
 ## [1.0.5] - 2026-03-19
 
 ### Changed

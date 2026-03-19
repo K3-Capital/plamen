@@ -72,13 +72,13 @@ The unified-vuln-db MCP server (`custom-mcp/unified-vuln-db/`) powers RAG search
 
 ```bash
 # Clone the repo
-git clone https://github.com/PlamenTSV/plamen.git ~/.claude
+git clone https://github.com/PlamenTSV/plamen.git ~/.plamen
 
 # Install CLI wrapper dependencies
 pip install rich InquirerPy
 
 # Install MCP server dependencies
-cd ~/.claude/custom-mcp/unified-vuln-db
+cd ~/.plamen/custom-mcp/unified-vuln-db
 pip install -e .
 
 # Run the CLI
