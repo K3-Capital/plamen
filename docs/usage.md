@@ -15,8 +15,12 @@ Interactive UI with dependency checking, tool installation, cost estimation, and
 ```bash
 plamen core /path/to/project --docs whitepaper.pdf
 plamen thorough /path/to/project --scope scope.txt --network ethereum --proven-only
-plamen setup                        # just install tools + build RAG
+plamen setup                        # install tools + build RAG
+plamen rag                          # rebuild RAG database only
+plamen uninstall                    # remove Plamen from ~/.claude
 ```
+
+> **Important**: Always use `plamen` (not `python3 plamen.py`) after PATH is set. The `python3 plamen.py` form only works from inside `~/.plamen/`.
 
 **PATH setup** (to use `plamen` as a command):
 

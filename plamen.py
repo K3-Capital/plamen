@@ -2224,7 +2224,6 @@ def main():
             sys.stdout.flush()
             _build_rag_db(w)
             return
-            return
 
         if arg in ("light", "core", "thorough", "compare"):
             target = sys.argv[2] if len(sys.argv) > 2 else ""

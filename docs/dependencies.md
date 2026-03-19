@@ -6,7 +6,9 @@
 
 ```bash
 # Auto-install everything (interactive)
-cd ~/.plamen && python plamen.py setup
+plamen setup                                    # if PATH is set
+cd ~/.plamen && python3 plamen.py setup         # macOS/Linux (before PATH)
+cd $HOME\.plamen; python plamen.py setup        # Windows PowerShell (before PATH)
 ```
 
 The setup wizard detects your OS and installed tools, then offers to install missing ones. For manual installation or troubleshooting, see below.
