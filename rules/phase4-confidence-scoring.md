@@ -57,7 +57,19 @@ Spawn highest-priority domains first within remaining budget. This ensures a Cri
 ## Convergence Criteria
 
 1. **Hard iteration cap**: Maximum 3 iterations (iteration 1 = full coverage, iterations 2-3 = targeted)
-2. **Dynamic spawn cap**: `depth_floor = 12 + max(0, 4 - actual_breadth_count)`, then `max_depth_spawns = min(max(depth_floor, ceil(total_findings / 5) + 7), 20)`. Simple codebases (2 breadth agents) get floor=14. Examples: 2 breadth + 20 findings → 14, 4 breadth + 20 findings → 12, 4 breadth + 40 findings → 15, any + 68 findings → 20 (cap).
+2. **Dynamic spawn cap**: `depth_floor = 12 + max(0, 4 - actual_breadth_count)`, then:
+   ```
+   niche_injectable_count = len(niche_agents) + len(injectable_agents)
+   niche_overflow = max(0, niche_injectable_count - 3)
+   thorough_bonus = 5 if MODE == THOROUGH else 0
+   hard_cap = 20 + niche_overflow + thorough_bonus
+   // Raise the floor to guarantee iteration 2-3 budget:
+   iter1_fixed = 10 + niche_injectable_count + 1  // 10 base + niche/injectable + DST
+   iter23_reserve = 3 if MODE == THOROUGH else 0
+   effective_floor = max(depth_floor, iter1_fixed + iter23_reserve)
+   max_depth_spawns = min(max(effective_floor, ceil(total_findings / 5) + 7), hard_cap)
+   ```
+   The base cap (20) applies to Core/Light. In Thorough mode, the cap scales with niche+injectable demand AND the floor rises to guarantee iteration 2-3 budget. Base iter1 consumption: 10 fixed (4 depth + 3 scanners + 1 validation sweep + 1 sibling propagation + 1 DST) + niche + injectable. The `effective_floor` ensures max_depth_spawns is always >= iter1 consumption + 3 reserved slots in Thorough mode. Examples: Core, 4 breadth + 25 findings + 2 niche → floor=14, max=14, iter1=13, remaining=1. Thorough, 7 breadth + 68 findings + 11 niche/injectable → iter1_fixed=22, reserve=3, effective_floor=25, cap=33, max_depth_spawns=25, iter1=22, remaining=3.
 3. **Progress check**: If NO finding's confidence improved in an iteration → exit loop early
 3a. **Iteration 2 skip policy**: Iteration 2 may ONLY be skipped if all UNCERTAIN findings are Low/Info severity. If ANY uncertain finding is Medium or above, iteration 2 is MANDATORY. "Pragmatic" skips of iteration 2 for Medium+ findings are a workflow violation.
 4. **Zero uncertain**: If 0 findings score < 0.7 after any iteration → exit loop

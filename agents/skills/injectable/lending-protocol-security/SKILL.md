@@ -56,6 +56,24 @@ Tag: `[BOUNDARY:HF={value} → liquidatable={YES/NO} → operator={>=/>}]`
 
 ---
 
+### 1d. Guard Selector → Post-Transaction Enforcement Completeness
+For protocols that use transaction guards or post-transaction hooks with conditional
+enforcement checks (e.g., post-transaction guard/hook triggered by selector or return value):
+
+1. Enumerate ALL function selectors the guard/hook handles
+2. For each selector: does the operation affect HF? (changes collateral amount,
+   debt amount, collateral factor, efficiency/isolation mode, reserve configuration)
+3. For each HF-affecting selector: does the guard/hook trigger the
+   post-transaction HF enforcement check?
+4. Flag any HF-affecting selector where post-tx enforcement is skipped
+
+| Selector | Function | Affects HF? | Triggers Post-Tx HF Check? | Gap? |
+|----------|----------|-------------|---------------------------|------|
+
+Tag: `[TRACE:guard_hook_selector={fn} → HF_affecting={YES/NO} → post_tx_check={YES/NO}]`
+
+---
+
 ## 2. Interest Accrual Correctness
 
 ### 2a. Accrual Timing
@@ -243,6 +261,7 @@ Tag: `[TRACE:oracle_price={source} → token_match={exact/wrapper/underlying} �
 | Section | Required | Completed? | Notes |
 |---------|----------|------------|-------|
 | 1. Health Factor Boundary Analysis | YES | | HF computation, boundaries, dust economics |
+| 1d. Guard Selector Enforcement | IF transaction guard pattern detected | | Post-tx HF check completeness per selector |
 | 2. Interest Accrual Correctness | YES | | Timing, index ordering, precision, pause interaction |
 | 3. Liquidation Mechanism Safety | YES | | Profitability, partial/full, collateral selection, front-running |
 | 3b. Liquidation DoS Vectors | YES | | Callbacks, blocklists, gas bounds, reentrancy conflicts |

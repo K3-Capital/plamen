@@ -73,7 +73,7 @@ For EVERY finding you analyze or produce, you MUST apply at least 2 of these 3 t
 A finding without at least 2 depth evidence tags is INCOMPLETE and will score poorly in confidence scoring.
 
 ## EXPLOITATION TRACE MANDATE
-For every Medium+ finding, produce a concrete exploitation trace: attacker action → state change → profit/loss. 'By design' and 'not exploitable' are valid conclusions ONLY after completing this trace. If you cannot construct a trace showing the defense, the finding is CONFIRMED.
+For every Medium+ finding, produce a concrete exploitation trace: attacker action → state change → concrete profit/loss in dollar terms. 'Validation bypassed' or 'state corrupted' is NOT a terminal state — trace until tokens move to an attacker-controlled address, users lose measurable value, OR the attacker gains a privileged state that enables further exploitation (document the enabled capabilities). 'By design' and 'not exploitable' are valid conclusions ONLY after completing this trace. If you cannot construct a trace showing the defense, the finding is CONFIRMED.
 
 ## DISCOVERY MODE
 You are in DISCOVERY mode. Your job is to SURFACE potential vulnerabilities, not to filter them. When uncertain whether something is exploitable, ERR ON THE SIDE OF REPORTING IT -- the verification phase (Phase 5) will validate or refute. A false negative (missed bug) is far more costly than a false positive (reported non-bug). Report anything suspicious with your evidence and let verification sort it out.
@@ -109,6 +109,7 @@ Also read {SCRATCHPAD}/attack_surface.md and check for UNANALYZED attack vectors
    - Does the function handle the case where `address != signer::address_of(account)`?
    - What is the DEFAULT state for a never-before-seen address? Can the caller exploit that default?
    - Common pattern: `stake(account: &signer, to: address, amount: u64)` where `to` has zero-initialized state that unlocks historical rewards/positions.
+   - Also test: `target = protocol infrastructure address` (resource account, module address, pool address). State changes on infrastructure addresses may affect ALL users, not just the intended recipient.
 
 8. **Protocol design limit analysis**: For each bounded parameter (max pools, max positions, SmartVector max length, Table max size), what happens AT the design limit?
    - Does the protocol degrade gracefully (partial functionality, queue, rejection) or fail catastrophically (abort, infinite loop, OOG)?
@@ -219,7 +220,7 @@ For EVERY question you investigate, apply at least 2 of these 3 techniques:
 ERR ON THE SIDE OF REPORTING. A false negative (missed bug) is far more costly than a false positive. Report anything suspicious with evidence.
 
 ## EXPLOITATION TRACE MANDATE
-For every Medium+ finding, produce a concrete exploitation trace: attacker action → state change → profit/loss.
+For every Medium+ finding, produce a concrete exploitation trace: attacker action → state change → concrete profit/loss in dollar terms. Trace until tokens move, users lose measurable value, OR the attacker gains a privileged state that enables further exploitation.
 
 ## Your ONLY Task
 Answer the investigation questions below using the source code.

@@ -49,7 +49,8 @@ From constraint_variables.md, for each parameter with a setter function:
 - Parameter DECREASES: who is harmed?
 - If either direction harms users AND no finding covers it → BLIND SPOT
 
-## CHECK 2b: Native Value in Loops (msg.value double-spend)
+## CHECK 2b: Native Value in Loops (IF msg.value detected in scope)
+Skip this check if `msg.value` is not detected in the scoped contracts.
 Grep for `msg.value` inside `for`/`while` loops or in functions called by `multicall`/`batch`:
 
 | Function | Contains msg.value? | Inside Loop/Batch? | Total msg.value Uses | Gap? |
@@ -57,7 +58,8 @@ Grep for `msg.value` inside `for`/`while` loops or in functions called by `multi
 
 If msg.value is read more than once in a single call context (loop iteration, multicall delegate) → each iteration reuses the same msg.value → FINDING (HIGH: direct fund theft via double-spend).
 
-## CHECK 2c: Unbounded Return Data (returnbomb)
+## CHECK 2c: Unbounded Return Data (IF .call{|.call(|.delegatecall( detected in scope)
+Skip this check if low-level `.call{`, `.call(`, or `.delegatecall(` is not detected in the scoped contracts.
 Grep for low-level `.call(` where the return data is copied without size cap:
 
 | External Call Site | Return Data Bounded? | Copy Method | Gap? |
@@ -65,13 +67,22 @@ Grep for low-level `.call(` where the return data is copied without size cap:
 
 Vulnerable pattern: `(bool success, bytes memory data) = target.call(...)` where `data` is unbounded and caller pays gas for copy. Safe pattern: `ExcessivelySafeCall` or `assembly { returndatacopy(..., ..., min(returndatasize(), CAP)) }`. If unbounded AND in a loop or user-triggered path → FINDING (MEDIUM: gas griefing / DoS).
 
-## CHECK 2d: Relay/Meta-tx Gas Griefing
+## CHECK 2d: Relay/Meta-tx Gas Griefing (IF gasleft()|relayer|forwarder detected in scope)
+Skip this check if `gasleft()`, `relayer`, `forwarder`, or meta-transaction patterns are not detected in the scoped contracts.
 Grep for `gasleft()`, `meta-transaction`, `relayer`, `forwarder`, or functions that execute on behalf of another user:
 
 | Relay Function | Gas Forwarding Pattern | Minimum Gas Check? | Refund on Failure? | Gap? |
 |---------------|----------------------|-------------------|-------------------|------|
 
 If a relay function forwards a user-specified call without ensuring sufficient gas remains for post-call logic → FINDING (MEDIUM: relayer can be griefed into paying gas for failed txs, or insufficient gas causes silent partial execution).
+
+## CHECK 2e: Approval/Delegate Sequence Conflicts (IF approve/safeApprove/increaseAllowance detected in scope)
+Skip this check if no `approve`, `safeApprove`, `increaseAllowance`, or `permit` patterns are detected in the scoped contracts. If `{SCRATCHPAD}/niche_multi_step_safety_findings.md` exists and is non-empty, limit this to listing affected functions in a table [Function | Pattern | Note] — do NOT trace execution, compute impacts, or construct exploitation scenarios. The niche agent handles deep analysis.
+For each multi-step operation (batch calls, multicall, loops over tokens), enumerate all approve/increaseAllowance/safeApprove calls. If the same (spender, token) pair is approved more than once in the same sequence, verify amounts are additive or the second accounts for the first. Sequential overwrites → FINDING.
+
+## CHECK 2f: Infrastructure Address Targeting (IF depositFor/stakeFor/delegateTo detected in scope)
+Skip this check if no `depositFor`, `stakeFor`, `delegateTo`, `mintFor`, `withdrawFor`, or similar on-behalf-of function patterns are detected. If `{SCRATCHPAD}/niche_multi_step_safety_findings.md` exists and is non-empty, limit this to listing affected functions in a table [Function | Target Param | Note] — do NOT trace execution or compute impacts.
+For each public/external function that writes state keyed by an address parameter (e.g., `depositFor(target)`, `stakeFor(target)`, `delegateTo(target)`): can any protocol infrastructure contract (router, vault, pool, strategy) be used as the target? If yes, what state is imposed on it, and does it break protocol operations? → FINDING.
 
 ## Output
 - Maximum 5 findings [BLIND-A1] through [BLIND-A5]
@@ -390,18 +401,6 @@ For EVERY state-modifying function that contains an if/else or early return:
 
 Tag: [TRACE:branch=false → stateVar={old_value} → consumer computes {wrong_result}]
 
-## CHECK 9: Sibling Propagation
-
-For each Medium+ CONFIRMED or PARTIAL finding in findings_inventory.md:
-
-1. Extract the ROOT CAUSE PATTERN in one sentence (e.g., 'state variable updated inside conditional block that can be skipped', 'paired operation asymmetry between deposit/withdraw paths')
-2. Grep ALL other functions in scope for the SAME pattern (same variable types, same code structure, same operation sequence)
-3. For each sibling function found: does it exhibit the SAME bug?
-4. If YES and no existing finding covers it → new finding [VS-N]
-
-| Finding | Root Cause Pattern | Sibling Functions | Same Bug? | New Finding? |
-|---------|-------------------|-------------------|-----------|-------------|
-
 ## SELF-CONSISTENCY CHECK (MANDATORY before output)
 
 For each finding you produce: if your own analysis identifies that the missing pattern/modifier/guard is FUNCTIONALLY REQUIRED to be absent (e.g., adding it would cause reverts, break composability, or make the function unreachable), your verdict MUST be REFUTED, not CONFIRMED with caveats. A finding that says "X is missing" and also explains "adding X would break Y" is self-contradictory - resolve the contradiction before outputting.
@@ -426,11 +425,51 @@ Maximum 12 findings (prioritize by impact). Filter out findings already covered 
 | Finding ID | Location | Root Cause (1-line) | Verdict | Severity | Precondition Type | Postcondition Type |
 |------------|----------|--------------------:|---------|----------|-------------------|-------------------|
 
-Return: 'DONE: {N} functions swept, {M} boundary issues, {K} reachability gaps, {J} guard gaps, {P} parity gaps, {Q} parameter validation gaps, {R} helper parity gaps, {S} conditional branch gaps, {T} sibling propagations'
+Return: 'DONE: {N} functions swept, {M} boundary issues, {K} reachability gaps, {J} guard gaps, {P} parity gaps, {Q} parameter validation gaps, {R} helper parity gaps, {S} conditional branch gaps'
 ")
 ```
 
 ---
+
+## Sibling Propagation Agent
+
+> **Trigger**: Always runs IN PARALLEL with Validation Sweep (iteration 1 only).
+> **Purpose**: Propagate confirmed root cause patterns to sibling functions. Extracted from Validation Sweep to avoid positional attention degradation (was CHECK 9 of 9 — highest cognitive load in worst attention position).
+> **Budget**: Scanner-tier (part of fixed base count, not depth budget).
+
+```
+Task(subagent_type="general-purpose", model="sonnet", prompt="
+You are the Sibling Propagation Agent. For each Medium+ CONFIRMED or PARTIAL finding, you search the entire codebase for sibling functions exhibiting the SAME root cause pattern.
+
+## Your Inputs
+Read:
+- {SCRATCHPAD}/findings_inventory.md (all findings with verdicts)
+- Source files for all in-scope contracts
+
+## Methodology
+
+For each Medium+ CONFIRMED or PARTIAL finding in findings_inventory.md:
+
+1. Extract the ROOT CAUSE PATTERN in one sentence (e.g., 'state variable updated inside conditional block that can be skipped', 'paired operation asymmetry between deposit/withdraw paths')
+2. Grep ALL other functions in scope for the SAME pattern (same variable types, same code structure, same operation sequence)
+3. For each sibling function found: does it exhibit the SAME bug?
+4. If YES and no existing finding covers it → new finding [SP-N]
+
+| Finding | Root Cause Pattern | Sibling Functions | Same Bug? | New Finding? |
+|---------|-------------------|-------------------|-----------|-------------|
+
+## Output
+Write to {SCRATCHPAD}/sibling_propagation_findings.md
+Use finding IDs [SP-1], [SP-2], etc. with standard finding format.
+Maximum 8 findings — prioritize by severity.
+
+## Chain Summary (MANDATORY)
+| Finding ID | Location | Root Cause (1-line) | Verdict | Severity | Precondition Type | Postcondition Type |
+|------------|----------|--------------------:|---------|----------|-------------------|-------------------|
+
+Return: 'DONE: {N} root cause patterns extracted, {M} sibling functions found, {K} new findings'
+")
+```
 
 ---
 

@@ -460,14 +460,26 @@ Replace placeholders: `{path}`, `{scratchpad}`, `{docs_path_or_url_if_provided}`
 | M4 | ECONOMIC_DESIGN_AUDIT + core state agent | Monetary params are state correctness |
 | M5 | EXTERNAL_PRECONDITION_AUDIT + external dependency agent | External preconditions are external dep analysis |
 
-**Rules**: Never merge two skills both requiring >5 analysis steps. Never merge across incompatible domains. **Never merge FLASH_LOAN_INTERACTION or ORACLE_ANALYSIS with any other skill.** **Max 3 templates per agent (including injectables).**
+**Rules**: Never merge two skills both requiring >5 analysis steps. Never merge across incompatible domains. **Never merge FLASH_LOAN_INTERACTION or ORACLE_ANALYSIS with any other skill.** **Max 3 templates per agent (including injectables) AND max 400 combined SKILL.md lines.** If a 3-template merge would exceed 400 lines, split into a 4th breadth agent instead. This prevents attention saturation on dense methodology — agents reliably execute ~400 lines of skill payload but degrade on larger prompts.
+
+### Step 2a.2: Move-Safety Agent (Aptos/Sui only)
+
+For Aptos and Sui audits, the 4 always-required skills (ABILITY_ANALYSIS, BIT_SHIFT_SAFETY, TYPE_SAFETY, REF_LIFECYCLE/OBJECT_OWNERSHIP) total ~900-950 lines — far exceeding the 400-line breadth agent cap. These are split into two delivery layers:
+
+1. **Core directives** (~130 lines): Loaded into EVERY breadth agent via `~/.claude/agents/skills/{LANGUAGE}/move-safety-core-directives/SKILL.md`. Contains inventory greps + flag tables. Counts toward the 400-line cap but leaves ~270 lines for conditional skills.
+2. **Move-Safety Agent** (1 dedicated agent): Spawned in Phase 3 alongside breadth agents. Loads ALL 4 full skill files (~950 lines). Runs the complete trace methodology that breadth agents cannot fit. Costs 1 breadth agent slot.
+
+The Move-Safety Agent prompt: load all 4 always-required SKILLs into a single agent with scope = "full Move-specific safety analysis." Its findings feed into `findings_inventory.md` alongside breadth findings. Depth agents still receive full skills per their injection rules (depth agents have separate context windows, not subject to the breadth merge cap).
+
+**EVM/Solana**: No Move-Safety Agent needed. EVM has no always-required skills. Solana has ACCOUNT_VALIDATION (130 lines) which fits within the 400-line cap.
 
 ### Step 2b: Instantiate Templates
 For each template in `template_recommendations.md`:
 1. Read template from `~/.claude/agents/skills/{LANGUAGE}/{template-name}/SKILL.md` (folder name is lowercase-hyphenated version of the template name, e.g., ORACLE_ANALYSIS → oracle-analysis)
-2. Replace `{PLACEHOLDERS}` with instantiation parameters
-3. **Conditional loading**: Strip sections wrapped in `<!-- LOAD_IF: FLAG -->...<!-- END_LOAD_IF: FLAG -->` when the flag was NOT detected
-4. Compose agent prompt with instantiated template
+2. For Aptos/Sui breadth agents: load `move-safety-core-directives/SKILL.md` instead of the 4 individual always-required skills. The full skills go to the Move-Safety Agent only.
+3. Replace `{PLACEHOLDERS}` with instantiation parameters
+4. **Conditional loading**: Strip sections wrapped in `<!-- LOAD_IF: FLAG -->...<!-- END_LOAD_IF: FLAG -->` when the flag was NOT detected
+5. Compose agent prompt with instantiated template
 
 ### Step 2b.1: Load Injectable Skills (Split Delivery)
 1. Read protocol type from `{scratchpad}/template_recommendations.md` → `## Injectable Skills`
@@ -768,6 +780,53 @@ Read: `~/.claude/rules/phase4-confidence-scoring.md` → "Phase 4b.5" section.
 Spawn sonnet RAG sweep agent. This is NOT optional.
 If MCP tools fail → agent falls back to WebSearch → if that fails → floor scores (0.3).
 The sweep MUST be attempted. Writing floor scores without attempting is a VIOLATION.
+
+### Phase 5: Verification (Batched Spawning)
+
+> **Read templates from**: `~/.claude/prompts/{LANGUAGE}/phase5-verification-prompt.md` + `~/.claude/rules/phase5-poc-execution.md`
+
+**Step 5.0: Compute verification scope**
+
+Read `{SCRATCHPAD}/hypotheses.md` (first 100 lines ONLY — hypothesis table). Count hypotheses per severity tier.
+
+| Mode | Scope |
+|------|-------|
+| Light | ALL Medium+ (all sonnet) |
+| Core | ALL Medium+ (opus for High/Chain, sonnet for Medium) |
+| Thorough | ALL severities (opus for High/Chain, sonnet for Medium, sonnet for Low/Info) + fuzz variants |
+
+**Step 5.0.1: Crash resume — skip already-verified hypotheses**
+
+Before spawning, scan `{SCRATCHPAD}/` for existing `verify_*.md` files. For each file, extract the hypothesis IDs it covers (from the `## Scope:` header or `### H-XX` sections). Remove those IDs from the verification queue. Only spawn verifiers for MISSING hypotheses.
+
+**Step 5.0.2: Batched spawning (when total verifiers > 8)**
+
+If total verifiers to spawn **≤ 8**: spawn ALL in a single parallel message (standard behavior — no batching needed).
+
+If total verifiers to spawn **> 8**: split into severity-tier batches. Spawn each batch, await ALL agents in that batch, then spawn the next batch.
+
+| Batch | Contains | Model | Max parallel agents |
+|-------|----------|-------|---------------------|
+| A | Chain hypotheses (CH-*) + High standalone | opus | all (typically 7-10) |
+| B | Medium (first half, up to 6) | sonnet | 6 |
+| C | Medium (second half) | sonnet | 6 |
+| D | Low + Info (single agent covering ALL) | sonnet | 1 |
+
+> **Batch sizing**: If a tier has ≤ 6 hypotheses, it fits in one batch. If > 6, split into sub-batches of ≤ 6. Chains + High are always in the same batch (both opus, rarely > 10 combined).
+
+> **Between batches**: Do NOT read the `verify_*.md` files written by the completed batch. Only note the short return message from each agent. Detailed output lives on disk — the orchestrator does not need it until Phase 5.5/6.
+
+> **Batch D (Low/Info)**: Always a SINGLE agent that handles all Low + Info hypotheses via code trace. This is already the standard approach — no change here.
+
+**Step 5.0.3: Verifier output convention**
+
+Each verifier writes its full output to `{SCRATCHPAD}/verify_{id}.md` (on disk). The agent return message to the orchestrator MUST be short:
+
+```
+Return: '{HYPOTHESIS_ID}: {VERDICT} | {evidence_tag} | {1-sentence justification}'
+```
+
+This keeps return messages to ~50 tokens per agent instead of the full verification output accumulating in orchestrator context.
 
 ### Phase 5.1: Skeptic-Judge Verification (Thorough mode only, HIGH/CRIT)
 

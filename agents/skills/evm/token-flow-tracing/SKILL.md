@@ -19,6 +19,8 @@ Where can tokens enter?
 - `receive()` / `fallback()` for native ETH
 - Side-effect receipts - tokens sent as part of external call (e.g., unstake returns tokens)
 
+For each callback handler the protocol IMPLEMENTS (not calls): verify access control (can anyone trigger it?), verify what state it modifies and whether that state is iterated elsewhere.
+
 ## 2. Token State Tracking
 
 For each entry point:

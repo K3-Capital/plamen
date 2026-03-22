@@ -31,7 +31,14 @@ ADAPTIVE_DEPTH_LOOP(findings_inventory):
   total_findings = len(findings_inventory)
   breadth_savings = max(0, 4 - actual_breadth_agent_count)  // breadth-to-depth redirect
   depth_floor = 12 + breadth_savings  // Simple codebases (2 breadth) get floor=14
-  max_depth_spawns = min(max(depth_floor, ceil(total_findings / 5) + 7), 20)
+  niche_injectable_count = len(niche_agents) + len(injectable_agents)
+  niche_overflow = max(0, niche_injectable_count - 3)
+  thorough_bonus = 5 if MODE == THOROUGH else 0
+  hard_cap = 20 + niche_overflow + thorough_bonus
+  iter1_fixed = 10 + niche_injectable_count + 1
+  iter23_reserve = 3 if MODE == THOROUGH else 0
+  effective_floor = max(depth_floor, iter1_fixed + iter23_reserve)
+  max_depth_spawns = min(max(effective_floor, ceil(total_findings / 5) + 7), hard_cap)
   dst_reserved = 1  // Design Stress Testing always gets 1 slot
   depth_available = max_depth_spawns - dst_reserved  // depth agents share the rest
   max_findings_per_agent = 5  // anti-dilution rule AD-3
@@ -151,8 +158,8 @@ ADAPTIVE_DEPTH_LOOP(findings_inventory):
   if any_respawned: await respawned results; re-merge
 
   // ═══ SCORE all findings ═══
-  // NOTE: Sibling Propagation merged back into Validation Sweep as CHECK 9.
-  // Saves 1 depth budget slot. Validation Sweep already reads findings_inventory.md.
+  // NOTE: Sibling Propagation is a standalone agent (scanner-tier, parallel with Validation Sweep).
+  // It reads findings_inventory.md and writes sibling_propagation_findings.md.
   // Spawn scoring agent (haiku - use Scoring Agent Template below)
   // Writes {SCRATCHPAD}/confidence_scores.md
   await scoring_agent

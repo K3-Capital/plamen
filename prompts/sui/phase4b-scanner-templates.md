@@ -51,6 +51,14 @@ From constraint_variables.md, for each parameter with a setter function:
 - Parameter DECREASES: who is harmed?
 - If either direction harms users AND no finding covers it -> BLIND SPOT
 
+## CHECK 2e: Approval/Delegate Sequence Conflicts (IF approve/delegate patterns detected in scope)
+Skip this check if no `approve`, `delegate`, `allowance`, or consent patterns are detected in the scoped modules. If `{SCRATCHPAD}/niche_multi_step_safety_findings.md` exists and is non-empty, limit this to listing affected functions in a table [Function | Pattern | Note] — do NOT trace execution, compute impacts, or construct exploitation scenarios. The niche agent handles deep analysis.
+For each multi-step operation (PTB composed calls, batch operations over coins/objects), enumerate all consent/delegate/approve operations. If the same (spender, coin_type) pair is authorized more than once, verify amounts are additive or the second accounts for the first. Sequential overwrites → FINDING.
+
+## CHECK 2f: Infrastructure Address Targeting (IF on-behalf-of patterns detected in scope)
+Skip this check if no `deposit_for`, `stake_for`, `delegate_to`, or similar on-behalf-of function patterns are detected. If `{SCRATCHPAD}/niche_multi_step_safety_findings.md` exists and is non-empty, limit this to listing affected functions in a table [Function | Target Param | Note] — do NOT trace execution or compute impacts.
+For each public entry function that writes state keyed by an address parameter (e.g., `deposit_for(target)`, `stake_for(target)`, `delegate_to(target)`): can any protocol shared object or singleton be used as the target? If yes, what state is imposed on it, and does it break protocol operations? → FINDING.
+
 ## Output
 - Maximum 5 findings [BLIND-A1] through [BLIND-A5]
 - Use standard finding format
@@ -441,18 +449,6 @@ For EVERY state-modifying function that contains an if/else or early abort:
 
 Tag: [TRACE:branch=false → stateVar={old_value} → consumer computes {wrong_result}]
 
-## CHECK 9: Sibling Propagation
-
-For each Medium+ CONFIRMED or PARTIAL finding in findings_inventory.md:
-
-1. Extract the ROOT CAUSE PATTERN in one sentence (e.g., 'state variable updated inside conditional block that can be skipped', 'paired operation asymmetry between deposit/withdraw paths')
-2. Grep ALL other functions in scope for the SAME pattern (same variable types, same code structure, same operation sequence)
-3. For each sibling function found: does it exhibit the SAME bug?
-4. If YES and no existing finding covers it → new finding [VS-N]
-
-| Finding | Root Cause Pattern | Sibling Functions | Same Bug? | New Finding? |
-|---------|-------------------|-------------------|-----------|-------------|
-
 ## SELF-CONSISTENCY CHECK (MANDATORY before output)
 
 For each finding you produce: if your own analysis identifies that the missing pattern/guard/check is FUNCTIONALLY REQUIRED to be absent (e.g., adding it would cause aborts, break PTB composability, or make the function unreachable), your verdict MUST be REFUTED, not CONFIRMED with caveats. A finding that says 'X is missing' and also explains 'adding X would break Y' is self-contradictory -- resolve the contradiction before outputting.
@@ -477,7 +473,25 @@ Maximum 12 findings (prioritize by impact). Filter out findings already covered 
 | Finding ID | Location | Root Cause (1-line) | Verdict | Severity | Precondition Type | Postcondition Type |
 |------------|----------|--------------------:|---------|----------|-------------------|-------------------|
 
-Return: 'DONE: {N} functions swept, {M} boundary issues, {K} reachability gaps, {J} guard gaps, {P} parity gaps, {Q} parameter validation gaps, {S} type verification gaps, {R} helper parity gaps, {U} conditional branch gaps, {T} sibling propagations'
+Return: 'DONE: {N} functions swept, {M} boundary issues, {K} reachability gaps, {J} guard gaps, {P} parity gaps, {Q} parameter validation gaps, {S} type verification gaps, {R} helper parity gaps, {U} conditional branch gaps'
+")
+```
+
+---
+
+## Sibling Propagation Agent
+
+> **Trigger**: Always (parallel with Validation Sweep). **Budget**: Scanner-tier (not depth budget).
+
+```
+Task(subagent_type="general-purpose", model="sonnet", prompt="
+You are the Sibling Propagation Agent. Read {SCRATCHPAD}/findings_inventory.md. For each Medium+ CONFIRMED/PARTIAL finding:
+1. Extract ROOT CAUSE PATTERN in one sentence
+2. Grep ALL other functions for the SAME pattern
+3. If sibling exhibits SAME bug and no finding covers it → [SP-N]
+
+Write to {SCRATCHPAD}/sibling_propagation_findings.md (max 8 findings, standard format with Chain Summary).
+Return: 'DONE: {N} patterns, {M} siblings, {K} new findings'
 ")
 ```
 

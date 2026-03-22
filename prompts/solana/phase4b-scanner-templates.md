@@ -48,6 +48,14 @@ For each parameter with an admin setter instruction in constraint_variables.md:
 If EITHER direction is unanalyzed → create analysis.
 Apply Rule 13: Model who is harmed in each direction. An admin decreasing a threshold may harm users differently than increasing it.
 
+## CHECK 2e: Approval/Delegate Sequence Conflicts (IF approve/delegate patterns detected in scope)
+Skip this check if no `approve`, `delegate`, or `authorized_amount` patterns are detected in the scoped programs. If `{SCRATCHPAD}/niche_multi_step_safety_findings.md` exists and is non-empty, limit this to listing affected functions in a table [Function | Pattern | Note] — do NOT trace execution, compute impacts, or construct exploitation scenarios. The niche agent handles deep analysis.
+For each multi-instruction transaction (composed CPIs, batch operations), enumerate all approve/delegate/authorize calls. If the same (delegate, token_account) pair is authorized more than once, verify amounts are additive or the second accounts for the first. Sequential overwrites → FINDING.
+
+## CHECK 2f: Infrastructure Address Targeting (IF on-behalf-of patterns detected in scope)
+Skip this check if no `deposit_for`, `stake_for`, `delegate_to`, or similar on-behalf-of instruction patterns are detected. If `{SCRATCHPAD}/niche_multi_step_safety_findings.md` exists and is non-empty, limit this to listing affected functions in a table [Function | Target Param | Note] — do NOT trace execution or compute impacts.
+For each public instruction that writes state keyed by an address/pubkey parameter (e.g., deposit_for(target), stake_for(target), delegate_to(target)): can any protocol PDA or singleton account be used as the target? If yes, what state is imposed on it, and does it break protocol operations? → FINDING.
+
 ## Output
 - Maximum 5 findings [BLIND-A1] through [BLIND-A5]
 - Use standard finding format with Solana rules (R1-R16, S1-S10)
@@ -303,18 +311,6 @@ For EVERY state-modifying instruction that contains an if/else, match arms, or e
 
 Tag: [TRACE:branch=false → stateVar={old_value} → consumer computes {wrong_result}]
 
-## CHECK 9: Sibling Propagation
-
-For each Medium+ CONFIRMED or PARTIAL finding in findings_inventory.md:
-
-1. Extract the ROOT CAUSE PATTERN in one sentence (e.g., 'state variable updated inside conditional block that can be skipped', 'paired operation asymmetry between deposit/withdraw paths')
-2. Grep ALL other functions in scope for the SAME pattern (same variable types, same code structure, same operation sequence)
-3. For each sibling function found: does it exhibit the SAME bug?
-4. If YES and no existing finding covers it → new finding [VS-N]
-
-| Finding | Root Cause Pattern | Sibling Functions | Same Bug? | New Finding? |
-|---------|-------------------|-------------------|-----------|-------------|
-
 ## SELF-CONSISTENCY CHECK (MANDATORY before output)
 
 For each finding you produce: if your own analysis identifies that the missing pattern/modifier/guard is FUNCTIONALLY REQUIRED to be absent (e.g., adding it would cause reverts, break composability, or make the function unreachable), your verdict MUST be REFUTED, not CONFIRMED with caveats. A finding that says "X is missing" and also explains "adding X would break Y" is self-contradictory - resolve the contradiction before outputting.
@@ -331,7 +327,49 @@ Use finding IDs [VS-1], [VS-2], etc. Maximum 12 findings.
 ## Chain Summary (MANDATORY)
 | Finding ID | Location | Root Cause (1-line) | Verdict | Severity | Precondition Type | Postcondition Type |
 
-Return: 'DONE: {N} instructions swept, {M} boundary issues, {K} reachability gaps, {J} guard gaps, {P} parity gaps, {Q} CPI parameter gaps, {R} helper parity gaps, {S} conditional branch gaps, {T} sibling propagations'
+Return: 'DONE: {N} instructions swept, {M} boundary issues, {K} reachability gaps, {J} guard gaps, {P} parity gaps, {Q} CPI parameter gaps, {R} helper parity gaps, {S} conditional branch gaps'
+")
+```
+
+---
+
+## Sibling Propagation Agent
+
+> **Trigger**: Always runs IN PARALLEL with Validation Sweep (iteration 1 only).
+> **Purpose**: Propagate confirmed root cause patterns to sibling functions. Extracted from Validation Sweep to avoid positional attention degradation (was CHECK 9 of 9 — highest cognitive load in worst attention position).
+> **Budget**: Scanner-tier (part of fixed base count, not depth budget).
+
+```
+Task(subagent_type="general-purpose", model="sonnet", prompt="
+You are the Sibling Propagation Agent. For each Medium+ CONFIRMED or PARTIAL finding, you search the entire codebase for sibling functions exhibiting the SAME root cause pattern.
+
+## Your Inputs
+Read:
+- {SCRATCHPAD}/findings_inventory.md (all findings with verdicts)
+- Source files for all in-scope programs
+
+## Methodology
+
+For each Medium+ CONFIRMED or PARTIAL finding in findings_inventory.md:
+
+1. Extract the ROOT CAUSE PATTERN in one sentence (e.g., 'state variable updated inside conditional block that can be skipped', 'paired operation asymmetry between deposit/withdraw paths')
+2. Grep ALL other instructions in scope for the SAME pattern (same account types, same code structure, same operation sequence)
+3. For each sibling instruction found: does it exhibit the SAME bug?
+4. If YES and no existing finding covers it → new finding [SP-N]
+
+| Finding | Root Cause Pattern | Sibling Instructions | Same Bug? | New Finding? |
+|---------|-------------------|---------------------|-----------|-------------|
+
+## Output
+Write to {SCRATCHPAD}/sibling_propagation_findings.md
+Use finding IDs [SP-1], [SP-2], etc. with standard finding format.
+Maximum 8 findings — prioritize by severity.
+
+## Chain Summary (MANDATORY)
+| Finding ID | Location | Root Cause (1-line) | Verdict | Severity | Precondition Type | Postcondition Type |
+|------------|----------|--------------------:|---------|----------|-------------------|-------------------|
+
+Return: 'DONE: {N} root cause patterns extracted, {M} sibling instructions found, {K} new findings'
 ")
 ```
 

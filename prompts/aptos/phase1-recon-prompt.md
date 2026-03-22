@@ -818,6 +818,7 @@ Grep in .move source files (exclude build/, .aptos/, tests/):
 | `acquires ` | RESOURCE_ACQUISITION |
 | `vector::.*length\|table::.*length\|smart_table\|simple_map\|big_vector` | COLLECTION_USAGE |
 | `ed25519::verify\|ed25519::signature_verify_strict\|multi_ed25519\|SignedMessage\|signature::verify\|rotate_authentication_key` | HAS_SIGNATURES |
+| `approve\|delegate\|allowance\|deposit_for\|stake_for\|delegate_to\|_on_behalf\|_for_user\|_for(.*address` (public entry functions with target address parameter writing state for that target) | MULTI_STEP_OPS |
 
 Write to {SCRATCHPAD}/detected_patterns.md:
 ```markdown
@@ -977,6 +978,7 @@ For EACH recommended template provide: Trigger, Relevance, Instantiation Paramet
 - HAS_SIGNATURES flag detected (ed25519::verify/multi_ed25519/SignedMessage patterns found) → SIGNATURE_VERIFICATION_AUDIT **niche agent** REQUIRED
 - DOCUMENTATION is non-empty AND contains testable protocol claims (fee structures, thresholds, permissions, distribution logic) → SPEC_COMPLIANCE_AUDIT **niche agent** REQUIRED (set `HAS_DOCS` flag)
 - HAS_MULTI_CONTRACT flag detected (2+ in-scope modules AND constraint_variables.md shows shared parameters/formulas across modules) → SEMANTIC_CONSISTENCY_AUDIT **niche agent** REQUIRED
+- MULTI_STEP_OPS flag detected (approve/delegate/allowance or deposit_for/stake_for/delegate_to patterns found) → MULTI_STEP_OPERATION_SAFETY **niche agent** REQUIRED
 
 ### Niche Agents (Phase 4b - standalone focused agents, 1 budget slot each)
 
@@ -986,6 +988,7 @@ For EACH recommended template provide: Trigger, Relevance, Instantiation Paramet
 | SIGNATURE_VERIFICATION_AUDIT | HAS_SIGNATURES flag (detected_patterns.md) | {YES/NO} | {if YES: signature verification patterns found} |
 | SPEC_COMPLIANCE_AUDIT | HAS_DOCS flag (non-empty DOCUMENTATION with testable claims) | {YES/NO} | {if YES: docs contain testable claims} |
 | SEMANTIC_CONSISTENCY_AUDIT | HAS_MULTI_CONTRACT flag (contract_inventory.md + constraint_variables.md) | {YES/NO} | {if YES: N shared parameters/formulas across M modules} |
+| MULTI_STEP_OPERATION_SAFETY | MULTI_STEP_OPS flag (detected_patterns.md) | {YES/NO} | {if YES: approve/delegate or on-behalf-of patterns found} |
 
 ### Manifest Summary
 - **Total Required Breadth Agents**: {count of YES in skill templates}

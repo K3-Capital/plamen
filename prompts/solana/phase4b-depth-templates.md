@@ -31,7 +31,7 @@ Your domain scope (Solana-specific):
 A finding without at least 2 depth evidence tags is INCOMPLETE and will score poorly in confidence scoring.
 
 ## EXPLOITATION TRACE MANDATE
-For every Medium+ finding, produce a concrete exploitation trace: attacker action → state change → profit/loss. 'By design' and 'not exploitable' are valid conclusions ONLY after completing this trace. If you cannot construct a trace showing the defense, the finding is CONFIRMED.
+For every Medium+ finding, produce a concrete exploitation trace: attacker action → state change → concrete profit/loss in dollar terms. 'Validation bypassed' or 'state corrupted' is NOT a terminal state — trace until tokens move to an attacker-controlled address, users lose measurable value, OR the attacker gains a privileged state that enables further exploitation (document the enabled capabilities). 'By design' and 'not exploitable' are valid conclusions ONLY after completing this trace. If you cannot construct a trace showing the defense, the finding is CONFIRMED.
 
 ## DISCOVERY MODE
 You are in DISCOVERY mode. Your job is to SURFACE potential vulnerabilities, not to filter them. When uncertain whether something is exploitable, ERR ON THE SIDE OF REPORTING IT - the verification phase (Phase 5) will validate or refute. A false negative (missed bug) is far more costly than a false positive (reported non-bug). Report anything suspicious with your evidence and let verification sort it out.
@@ -89,6 +89,9 @@ Also read {SCRATCHPAD}/attack_surface.md and check for UNANALYZED attack vectors
 2. **Program upgrade risk**: For each external program dependency - is it upgradeable? What happens if the external program's interface changes?
 3. **Instruction introspection**: If the program reads `sysvar::instructions` - can the check be bypassed by structuring the transaction differently?
 4. **Instruction composition attacks (R15 analog)**: Can an attacker compose multiple instructions in one transaction to atomically manipulate state? Model: IX1(manipulate) → IX2(exploit) → IX3(restore)
+
+4b. **Infrastructure PDA/account targeting**: For every public instruction that accepts a target pubkey/address parameter AND writes state keyed by that parameter (e.g., `deposit_for(target)`, `stake_for(target)`, `delegate_to(target)`): can any protocol PDA or singleton account be used as the target? If yes, what state is imposed on it, and does it break protocol operations?
+   Tag: `[TRACE:attacker calls deposit_for(pool_pda, amount) → pool_pda.cooldown = now + 7d → pool operations revert for 7d]`
 
 5. **Tainted source consumption enumeration**: When a tainted or weak input source is identified (weak RNG, manipulable oracle, user-controllable parameter), enumerate ALL instructions that consume it - not just the one where the finding was discovered. Rate the finding's severity by the WORST consumption point. A weak RNG consumed only in a view function is Low; the same RNG consumed in minting, reward selection, AND portfolio assignment may be Critical. Use grep to find all call sites of the tainted source.
 
@@ -158,7 +161,7 @@ For EVERY question you investigate, apply at least 2 of these 3 techniques:
 ERR ON THE SIDE OF REPORTING. A false negative (missed bug) is far more costly than a false positive. Report anything suspicious with evidence.
 
 ## EXPLOITATION TRACE MANDATE
-For every Medium+ finding, produce a concrete exploitation trace: attacker action → state change → profit/loss.
+For every Medium+ finding, produce a concrete exploitation trace: attacker action → state change → concrete profit/loss in dollar terms. Trace until tokens move, users lose measurable value, OR the attacker gains a privileged state that enables further exploitation.
 
 ## Your ONLY Task
 Answer the investigation questions below using the source code.

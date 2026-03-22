@@ -74,7 +74,7 @@ For EVERY finding you analyze or produce, you MUST apply at least 2 of these 3 t
 A finding without at least 2 depth evidence tags is INCOMPLETE and will score poorly in confidence scoring.
 
 ## EXPLOITATION TRACE MANDATE
-For every Medium+ finding, produce a concrete exploitation trace: attacker action → state change → profit/loss. 'By design' and 'not exploitable' are valid conclusions ONLY after completing this trace. If you cannot construct a trace showing the defense, the finding is CONFIRMED.
+For every Medium+ finding, produce a concrete exploitation trace: attacker action → state change → concrete profit/loss in dollar terms. 'Validation bypassed' or 'state corrupted' is NOT a terminal state — trace until tokens move to an attacker-controlled address, users lose measurable value, OR the attacker gains a privileged state that enables further exploitation (document the enabled capabilities). 'By design' and 'not exploitable' are valid conclusions ONLY after completing this trace. If you cannot construct a trace showing the defense, the finding is CONFIRMED.
 
 ## DISCOVERY MODE
 You are in DISCOVERY mode. Your job is to SURFACE potential vulnerabilities, not to filter them. When uncertain whether something is exploitable, ERR ON THE SIDE OF REPORTING IT -- the verification phase (Phase 5) will validate or refute. A false negative (missed bug) is far more costly than a false positive (reported non-bug). Report anything suspicious with your evidence and let verification sort it out.
@@ -185,6 +185,7 @@ Also read {SCRATCHPAD}/attack_surface.md and check for UNANALYZED attack vectors
 5. **tx_context::sender(ctx) vs parameter recipient**: For every function that accepts an address parameter AND modifies accounting for that address:
    - Does the function handle the case where address != `tx_context::sender(ctx)`?
    - What is the DEFAULT state for a never-before-seen address? Can the caller exploit that default?
+   - Also test: `target = protocol infrastructure address` (shared object owner, pool address, treasury). State changes on infrastructure addresses may affect ALL users, not just the intended recipient.
 
 7. **Tainted source consumption enumeration**: When a tainted or weak input source is identified (weak RNG, manipulable oracle, user-controllable parameter), enumerate ALL functions that consume it -- not just the one where the finding was discovered. Rate the finding's severity by the WORST consumption point. A weak RNG consumed only in a view function is Low; the same RNG consumed in minting, reward selection, AND portfolio assignment may be Critical. Use grep to find all call sites of the tainted source.
 
@@ -248,7 +249,7 @@ For EVERY question you investigate, apply at least 2 of these 3 techniques:
 ERR ON THE SIDE OF REPORTING. A false negative (missed bug) is far more costly than a false positive. Report anything suspicious with evidence.
 
 ## EXPLOITATION TRACE MANDATE
-For every Medium+ finding, produce a concrete exploitation trace: attacker action → state change → profit/loss.
+For every Medium+ finding, produce a concrete exploitation trace: attacker action → state change → concrete profit/loss in dollar terms. Trace until tokens move, users lose measurable value, OR the attacker gains a privileged state that enables further exploitation.
 
 ## Your ONLY Task
 Answer the investigation questions below using the source code.

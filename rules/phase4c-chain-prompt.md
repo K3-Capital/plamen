@@ -14,7 +14,7 @@ This prevents agents from reading 5000+ lines of full depth/scanner output.
 
 ```
 For each file in [depth_*_findings.md, blind_spot_*_findings.md, validation_sweep_findings.md,
-                   niche_*_findings.md, design_stress_findings.md]:
+                   niche_*_findings.md, design_stress_findings.md, sibling_propagation_findings.md]:
   Extract ONLY the '## Chain Summary' table section
   Append to {SCRATCHPAD}/chain_summaries_compact.md with a header per source file
 ```
