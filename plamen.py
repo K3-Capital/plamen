@@ -729,6 +729,95 @@ def _rag_needs_build() -> bool:
     return _probe_rag_db() <= 0
 
 
+# ── RAG thermal/resource detection ────────────────────────
+
+def _get_total_ram_gb() -> float:
+    """Get total physical RAM in GB. Returns 0 on failure."""
+    try:
+        if sys.platform == "darwin":
+            r = subprocess.run(["sysctl", "-n", "hw.memsize"],
+                               capture_output=True, text=True, timeout=3)
+            return int(r.stdout.strip()) / (1024 ** 3)
+        elif sys.platform == "linux":
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        return int(line.split()[1]) / (1024 ** 2)
+        elif sys.platform == "win32":
+            import ctypes
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+            stat = MEMORYSTATUSEX(dwLength=ctypes.sizeof(MEMORYSTATUSEX))
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+            return stat.ullTotalPhys / (1024 ** 3)
+    except Exception:
+        pass
+    return 0
+
+
+def _is_fanless_mac() -> bool:
+    """Detect fanless Macs (MacBook Air, etc.) that throttle under sustained ML load."""
+    if sys.platform != "darwin":
+        return False
+    # Primary: IORegistry contains the hardware model (e.g. "MacBookAir15,1")
+    try:
+        r = subprocess.run(
+            ["ioreg", "-c", "IOPlatformExpertDevice", "-d", "2"],
+            capture_output=True, text=True, timeout=3)
+        if "macbookair" in r.stdout.lower():
+            return True
+    except Exception:
+        pass
+    # Fallback: default macOS hostnames contain the model name
+    try:
+        import socket
+        hostname = socket.gethostname().lower().replace(" ", "-")
+        if "macbook-air" in hostname or "macbookair" in hostname:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _should_use_fast_rag() -> bool:
+    """Detect if machine should use lightweight embedding model for RAG build.
+
+    Nomic Embed v1.5 (~500MB) + PyTorch runs sustained CPU inference during
+    indexing. On fanless machines (all MacBook Airs) this causes thermal
+    throttling and potential crashes. On low-RAM machines (<16GB) it causes
+    heavy swapping. MiniLM (~90MB) is ~5x faster and perfectly adequate.
+
+    Override: set VULN_DB_FAST_MODE=0 to force Nomic, =1 to force MiniLM.
+    """
+    val = os.environ.get("VULN_DB_FAST_MODE", "").lower()
+    if val in ("0", "false", "no"):
+        return False
+    if val in ("1", "true", "yes"):
+        return True
+
+    # Fanless Macs throttle regardless of RAM — sustained PyTorch load
+    # on M1/M2/M3 Air causes 100%+ CPU with no thermal headroom
+    if _is_fanless_mac():
+        return True
+
+    # Low RAM: Nomic + PyTorch + ChromaDB needs ~4-6GB working memory
+    ram_gb = _get_total_ram_gb()
+    if 0 < ram_gb < 16:
+        return True
+
+    return False
+
+
 def _build_rag_db(w):
     """Run the RAG indexer pipeline. Returns True on success."""
     vuln_db_dir = os.path.join(PLAMEN_HOME, "custom-mcp", "unified-vuln-db")
@@ -737,6 +826,14 @@ def _build_rag_db(w):
         return False
 
     py = _python_bin()
+
+    # Auto-detect thermal/memory constraints and switch to lightweight model
+    if _should_use_fast_rag():
+        os.environ["VULN_DB_FAST_MODE"] = "1"
+        ram = _get_total_ram_gb()
+        reason = "fanless Mac detected" if _is_fanless_mac() else f"{ram:.0f}GB RAM"
+        w(f"  {_C_BLUE}Using lightweight embeddings ({reason}){_RST}\n")
+        w(f"  {_C_DARK_GRAY}Override: VULN_DB_FAST_MODE=0 to use full model{_RST}\n\n")
 
     # Check for Solodit API key — needed for the largest data source
     if not os.environ.get("SOLODIT_API_KEY", "").strip():
