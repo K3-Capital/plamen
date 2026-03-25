@@ -191,6 +191,33 @@ For each finding with Severity=Low AND a non-empty Postcondition Type in the Cha
 
 **Cap**: Maximum 5 escalations per audit. If more than 5 match, prioritize by the highest severity of the matching Medium+ finding.
 
+## TASK 5: State Dependency Cross-Reference
+
+Build a cross-function dependency map via shared state using Slither's mechanical output.
+
+**Step 1 (mechanical)**: For each in-scope contract, call `analyze_state_variables(contract_name)`. Extract the `read_in` and `written_in` function lists per variable. Build the raw pair table:
+
+| Variable | Written By | Read By |
+|----------|-----------|---------|
+
+Filter: keep only pairs where writer ≠ reader AND writer is external/public.
+
+**Step 2 (judgment)**: For each pair from Step 1, assess: can the writer put this variable in a state that breaks the reader's assumption?
+
+Write to `{SCRATCHPAD}/state_dependency_map.md`:
+
+| Variable | Writer Function | Consumer Function | Can Writer Break Consumer? |
+|----------|----------------|-------------------|---------------------------|
+
+**Rules**:
+- Step 1 is deterministic — emit ALL pairs from Slither output before filtering
+- Cap Step 2 at 30 rows. Prioritize: critical consumers (settlement, withdrawal, claim, liquidation) first
+- Omit trivially safe pairs (both share the same access-control modifier AND the writer cannot set an invalid value)
+- The "Can Writer Break Consumer?" column is a YES/NO with a 1-phrase reason. YES entries become depth agent investigation targets
+- If `analyze_state_variables` fails or is unavailable: fall back to inferring from `{SCRATCHPAD}/state_variables.md` and `{SCRATCHPAD}/function_list.md`
+
+---
+
 ## Skip Depth? (RARE)
 Depth skips ONLY if ALL conditions met:
 - [ ] 0 REFUTED findings

@@ -240,6 +240,49 @@ ADAPTIVE_DEPTH_LOOP(findings_inventory):
 
     // Loop complete
 
+    // ═══ COVERED-FUNCTION RE-SWEEP ═══
+    // Counters finding-level attention saturation: once a function has a finding,
+    // other vulnerability classes in that function are masked. This re-sweep forces
+    // lens rotation on functions that already have findings.
+    // 1 sonnet agent, 1 depth budget slot. Runs after DST, before chain prep.
+    covered = extract_functions_with_findings(depth_*_findings, blind_spot_*_findings, niche_*_findings)
+    if len(covered) > 0 AND depth_spawns_used < max_depth_spawns:
+      spawn resweep_agent(model="sonnet", prompt="
+        You are the Covered-Function Re-Sweep Agent.
+
+        These functions already have findings. For each, the KNOWN topic is listed.
+        Analyze each for vulnerability classes OUTSIDE the known topic.
+
+        {COVERED_FUNCTION_TABLE: function_name | file:line | known_topic_to_EXCLUDE}
+
+        Read {SCRATCHPAD}/state_dependency_map.md for cross-function state dependencies.
+
+        For each function:
+        1. Read the function source code
+        2. What OTHER vulnerability classes could affect this function?
+           (state dependency breaks, input validation gaps, authorization/approval
+           side effects, resource field violations, return value mishandling)
+        3. If the function modifies state that other functions depend on (check
+           state_dependency_map.md): can calling this function break those consumers?
+
+        CALIBRATION:
+        - Finding nothing new is a valid and expected output
+        - Do NOT fabricate findings to justify your existence
+        - Every finding MUST have a specific code location (file:line)
+        - Every finding MUST NOT overlap with the excluded topic
+        - Max 5 findings total across all re-examined functions
+
+        Write to {SCRATCHPAD}/resweep_findings.md
+        Use finding IDs [RSW-1], [RSW-2], etc. with standard finding format.
+
+        SCOPE: Write ONLY to your assigned output file. Do NOT proceed to subsequent
+        pipeline phases. Return your findings and stop.
+
+        Return: 'DONE: {N} new findings from {M} re-examined functions'
+      ")
+      depth_spawns_used += 1
+      await resweep_agent
+
     // ═══ VARIABLE-FINDING CROSS-REFERENCE ═══
     // Sonnet agent pre-computes a compact variable→finding map for chain analysis.
     // This surfaces semantic_invariants.md data WITHOUT loading it into the chain agent.

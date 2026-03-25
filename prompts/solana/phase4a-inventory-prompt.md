@@ -192,6 +192,26 @@ For each finding with Severity=Low AND a non-empty Postcondition Type in the Cha
 
 **Cap**: Maximum 5 escalations per audit. If more than 5 match, prioritize by the highest severity of the matching Medium+ finding.
 
+## TASK 5: State Dependency Cross-Reference
+
+Using `{SCRATCHPAD}/state_variables.md` and `{SCRATCHPAD}/function_list.md`, build a cross-function dependency map via shared state.
+
+For each state variable (account field) written by instruction A and read/depended-on by instruction B (where A ≠ B and A is externally callable):
+- Can A put the variable in a state that breaks B's assumption?
+
+Write to `{SCRATCHPAD}/state_dependency_map.md`:
+
+| Variable | Writer Function | Consumer Function | Can Writer Break Consumer? |
+|----------|----------------|-------------------|---------------------------|
+
+**Rules**:
+- Cap at 30 rows. Prioritize: externally callable writers first, critical consumers (settlement, withdrawal, claim, liquidation, close) first
+- Omit trivially safe pairs (both share the same signer constraint AND the writer cannot set an invalid value)
+- The "Can Writer Break Consumer?" column is a YES/NO with a 1-phrase reason. YES entries become depth agent investigation targets
+- Filter: different instructions only (self-reads are not cross-function conflicts)
+
+---
+
 ## Skip Depth? (RARE)
 Depth skips ONLY if ALL conditions met:
 - [ ] 0 REFUTED findings
