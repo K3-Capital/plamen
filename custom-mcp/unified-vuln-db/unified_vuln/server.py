@@ -16,6 +16,7 @@ RIGHT USAGE: "I identified a CEI violation - how has this pattern been exploited
 import asyncio
 import json
 import os
+import threading
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from mcp.server import Server
@@ -1822,24 +1823,32 @@ describe("{bug_class} Exploit PoC", function () {{
 # ENTRY POINT
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Lazily-initialized database (loaded on first tool call, not at server startup)
-# This avoids blocking the MCP handshake — the 14s model load was causing
-# Claude Code to timeout before the server could even respond to `initialize`.
+# Lazily-initialized database — starts loading in a background thread immediately
+# after the MCP handshake completes (see run()). This means the DB is warm by the
+# time the first tool call arrives without blocking the initialize handshake.
 _preloaded_db = None
+_db_lock = threading.Lock()
+
 
 def _ensure_db_loaded():
-    """Lazy-load the database on first tool call (not at startup)."""
+    """Return the loaded DB, waiting if the background warm-up is still in progress."""
     global _preloaded_db
-    if _preloaded_db is None:
-        import sys
-        print("Loading vulnerability database (first tool call)...", file=sys.stderr)
-        try:
-            _preloaded_db = get_db()
-            count = _preloaded_db.collection.count()
-            print(f"Database ready: {count} vulnerabilities indexed", file=sys.stderr)
-        except Exception as e:
-            print(f"Warning: Database load failed: {e}", file=sys.stderr)
-            _preloaded_db = "failed"
+    # Fast path: already loaded (or failed)
+    if _preloaded_db is not None:
+        return _preloaded_db if _preloaded_db != "failed" else None
+    # Slow path: either background thread is still loading, or warm-up wasn't triggered.
+    # Double-checked locking ensures only one thread does the actual load.
+    with _db_lock:
+        if _preloaded_db is None:
+            import sys
+            print("Loading vulnerability database...", file=sys.stderr)
+            try:
+                _preloaded_db = get_db()
+                count = _preloaded_db.collection.count()
+                print(f"Database ready: {count} vulnerabilities indexed", file=sys.stderr)
+            except Exception as e:
+                print(f"Warning: Database load failed: {e}", file=sys.stderr)
+                _preloaded_db = "failed"
     return _preloaded_db if _preloaded_db != "failed" else None
 
 
@@ -1886,10 +1895,14 @@ def run():
     """Entry point."""
     import asyncio, sys
 
-    # DB loading is now LAZY (on first tool call) instead of blocking startup.
-    # This lets the MCP server complete the handshake with Claude Code immediately,
-    # then load the 14s sentence_transformers + ChromaDB when actually needed.
-    print("unified-vuln-db server starting (DB loads on first tool call)...", file=sys.stderr)
+    # Start DB warm-up in a background thread immediately after launch.
+    # The MCP handshake (initialize) is non-blocking — warm-up runs concurrently.
+    # By the time the first audit agent makes a tool call (typically 30-120s later),
+    # the 14s model load + ChromaDB HNSW index open will already be complete,
+    # eliminating the freeze users saw when the cold-start hit mid-audit.
+    print("unified-vuln-db server starting (warming up DB in background)...", file=sys.stderr)
+    _warmup_thread = threading.Thread(target=_ensure_db_loaded, daemon=True, name="db-warmup")
+    _warmup_thread.start()
 
     asyncio.run(main())
 
