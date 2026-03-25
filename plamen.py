@@ -303,8 +303,10 @@ def check_dependencies() -> bool:
     # RAG database status
     w(f"  {bx}├{'─' * W}┤{_RST}\n")
     rag_count = _probe_rag_db()
-    if rag_count > 0:
-        rag_status = f"{_C_GREEN}{rag_count:,} entries{_RST}"
+    if rag_count >= _RAG_MIN_ENTRIES:
+        rag_status = f"{_C_GREEN}{rag_count:,} entries{_RST}  {_C_DARK_GRAY}(cold-start ~30s on first query){_RST}"
+    elif rag_count > 0:
+        rag_status = f"{_C_ORANGE}{rag_count:,} (incomplete){_RST}"
     elif rag_count == 0:
         rag_status = f"{_C_RED}empty{_RST}"
     else:
