@@ -199,15 +199,6 @@ components — restating the invariant in different words is not an implication.
 Trust levels: `FULLY_TRUSTED` (will not act maliciously - e.g., multisig, governance, DAO), `SEMI_TRUSTED(bounds: ...)` (bounded by on-chain parameters), `PRECONDITION` (deployment/config state assumption), `UNTRUSTED` (default for users, external programs).
 If no explicit trust documentation exists, infer from signer checks and authority patterns and note `Source: inferred`.
 
-```
-## Operational Implications
-State what each invariant means for how the system works — not what it checks,
-but what it tells you about the system's accounting model.
-Derive these from the invariant formulas and the account/struct definitions in the code.
-Each implication must reference specific data structure signatures or formula
-components — restating the invariant in different words is not an implication.
-```
-
 Write to {SCRATCHPAD}/design_context.md
 
 ## TASK 11: External Program Verification (MANDATORY)
@@ -276,6 +267,8 @@ SCRATCHPAD: {scratchpad}
    - `[profile.release] overflow-checks = true` -- if FALSE/missing, flag as HIGH priority (integer overflow risk)
    - Anchor version -- note for known vuln cross-reference
 6. If build fails after 3 attempts, document failure and continue
+
+Also run: `git rev-list --count HEAD` — if result is 1, include `REPO_SHAPE: squashed_import`, otherwise `REPO_SHAPE: normal_dev`. This tells FORK_ANCESTRY whether git history analysis is useful.
 
 Write to {SCRATCHPAD}/build_status.md:
 ```markdown

@@ -483,114 +483,18 @@ Verify hot potato correctness:
 
 ---
 
-## Rule MR1: Ability Analysis (Shared Move Rule)
+## Rules MR1–MR4: Shared Move Rules (SKILL REFERENCE)
 
-**Pattern**: Every struct definition with ability annotations
-**Check**: Are the assigned abilities security-appropriate?
-
-| Ability | What It Allows in Sui | Security Risk If Misapplied |
-|---------|----------------------|----------------------------|
-| `copy` | Value can be duplicated | Token/receipt duplication -- value tokens MUST NOT have `copy` |
-| `drop` | Value can be silently discarded | Obligation bypass -- hot potatoes (flash loan receipts, permission tokens) MUST NOT have `drop` |
-| `store` | Value can be stored in other objects AND transferred via `transfer::public_transfer` | Unrestricted transferability -- access control tokens with `store` can be transferred to unauthorized parties |
-| `key` | Value is a Sui object (must have `id: UID` as first field) | Object identity -- required for on-chain existence. `key` without `store` restricts transfer to defining module only |
-
-**Critical patterns**:
-
-| Pattern | Abilities at Risk | Impact | Check |
-|---------|------------------|--------|-------|
-| Hot potato (flash loan receipt) | `drop` must be ABSENT | If `drop` present -> receipt discarded -> loan not repaid | Verify zero abilities on receipt struct |
-| Capability object (AdminCap) | `store` enables `public_transfer` | If `store` present -> anyone holding cap can transfer it away | `key` only -> module-controlled transfer |
-| Value-bearing struct | `copy` must be ABSENT | If `copy` present -> struct duplicated -> double-spend | Verify no `copy` on value structs |
-| One-Time Witness (OTW) | Must have `drop` only | OTW pattern: struct named after module, `drop` only, no fields | Verify OTW has exactly `drop`, consumed in `init()` |
-| Phantom type parameter | `phantom T` not checked at runtime | Malicious `T` can be supplied if not constrained | Verify `T` is validated in function logic |
-| Key-only transfer control | `key` without `store` | Transfer controlled by defining module -- adding `store` = lose transfer control | Verify intentional if `store` added to `key` struct |
-
-**Mandatory checks**:
-1. **Value tokens** (`Coin<T>`, custom tokens representing value): MUST NOT have `copy`. Must have `drop` only if zero-value destruction is safe.
-2. **Capability/authority structs** (`AdminCap`, `TreasuryCap`): `key` required. Should NOT have `store` unless intentional transferability is desired. MUST NOT have `copy` or `drop`.
-3. **Hot potato structs** (flash loan receipts, sequencing tokens): MUST have NO abilities -- all four absent. This forces consumption within the same PTB.
-4. **Receipt/proof structs**: Assess whether `drop` is safe -- if dropping the receipt skips a finalization step, `drop` is dangerous.
-5. **Witness types** (One-Time Witness): Must have `drop` only. MUST NOT have `copy`, `store`, or `key`. Must be consumed in `init` function.
-
-**Action**: For every struct, verify its abilities match its security requirements. Mismatched abilities -> FINDING. Document ability-to-purpose mapping.
-
----
-
-## Rule MR2: Bit-Shift Overflow Safety (Shared Move Rule)
-
-**Pattern**: Any use of `<<` or `>>` operators
-**Check**: Shift amount validated against bit width BEFORE the shift operation
-
-**CRITICAL**: Move does NOT check shift amounts at runtime. Left shift by >= bit_width SILENTLY produces 0. This was the root cause of the $223M Cetus hack on Sui.
-
-**Mandatory checks**:
-
-| Check | What to Verify | Impact if Missing |
-|-------|---------------|-------------------|
-| Shift amount < bit_width | `shift_amount < 64` for `u64`, `shift_amount < 128` for `u128`, `shift_amount < 256` for `u256` | Silent zero result -> catastrophic arithmetic error |
-| Pre-shift overflow | `value << amount` won't overflow the type | Value silently truncated |
-| Right shift underflow | `value >> amount` behavior at boundaries | May produce 0 when non-zero expected |
-| Dynamic shift amount | Shift amount derived from user input or computation | Attacker controls shift amount -> controls output |
-
-**Attack example** (Cetus-style):
-```move
-// VULNERABLE: no validation on shift_amount
-let result = 1u128 << shift_amount; // if shift_amount >= 128, result = 0
-let price = numerator / result;     // division by zero or infinite price
-```
-
-```move
-// SAFE: bounded before use
-assert!(shift_amount < 128, E_INVALID_SHIFT);
-let result = 1u128 << shift_amount;
-```
-
-**Action**: For every `<<` and `>>` operation, trace the shift amount to its source. If unbounded or derived from user input/computation without explicit bounds checking -> FINDING. This is a non-negotiable requirement -- the Cetus exploit proved this can cause hundreds of millions in losses.
-
----
-
-## Rule MR3: Type Safety and Generic Parameters (Shared Move Rule)
-
-**Pattern**: Generic type parameters in functions and structs
-**Check**: Are type parameters sufficiently constrained? Can adversarial type instantiation cause harm?
-
-| Attack Vector | Description | Sui-Specific Defense |
-|--------------|-------------|---------------------|
-| Phantom type spoofing | `Coin<FakeUSDC>` passed as `Coin<USDC>` | Type system prevents at compile time for known types; runtime: use `type_name::get<T>()` for dynamic validation |
-| Generic pool confusion | `Pool<A, B>` vs `Pool<B, A>` (swapped type params) | Verify type parameter ordering is validated or canonicalized |
-| Witness pattern bypass | Module witness `W` not properly constrained | One-Time Witness (OTW) must be consumed on use; verify `types::is_one_time_witness<T>()` |
-| Dynamic type confusion | Dynamic field read with wrong type parameter | `dynamic_field::borrow<K, V>()` -- wrong `V` type -> deserialization failure or wrong data |
-| `type_name` comparison | String-based type comparison may be incomplete | Ensure full path comparison including package ID, not just module::name |
-| Unconstrained generics | Functions accepting `<T>` without ability bounds | May accept unexpected types; functions accepting `<T: store + drop>` may accept types with unintended behavior |
-| Type confusion in collections | Dynamic fields keyed by type (`dynamic_field::add<TypeKey<T>, Value>`) | Can different `T` instantiations collide or overwrite each other? |
-
-**Action**: For every generic type parameter, verify constraints are sufficient to prevent adversarial instantiation. For every OTW, verify it is consumed in `init` and cannot be stored or replicated. For dynamic fields, verify type parameters match across add/borrow/remove calls.
-
----
-
-## Rule MR4: Dependency and Package Version Analysis (Shared Move Rule)
-
-**Pattern**: External package dependencies declared in `Move.toml`
-**Check**: Are dependencies pinned, upgrade-safe, and version-consistent?
-
-**Checks**:
-1. **Dependency inventory**: List all `[dependencies]` in `Move.toml` with their source (git, local, published address)
-2. **Version pinning**: Are dependencies pinned to specific revisions/addresses? Unpinned git dependencies can change between builds.
-3. **Upgrade policy of dependencies**: If a dependency package has an active `UpgradeCap`, its behavior can change. The audited protocol's security depends on the dependency's immutability.
-4. **Transitive dependencies**: Dependencies of dependencies -- are they also secure?
-5. **Function visibility of consumed APIs**: Does the protocol use `public` functions that the dependency could remove in an upgrade?
-
-**Upgrade policy risk levels**:
-
-| Policy | Risk | Implication |
-|--------|------|-------------|
-| `immutable` | LOW | Cannot be changed -- fully trustless |
-| `dep_only` | LOW | Can only change dependencies, not code |
-| `additive` | MEDIUM | Can add new functions, cannot modify existing |
-| `compatible` | HIGH | Can modify implementations while keeping signatures |
-
-**Action**: For every external dependency, assess upgrade risk and document. If protocol security depends on immutable behavior of an upgradeable dependency -> FINDING.
+> **MR1 (Ability Analysis)**, **MR2 (Bit-Shift Safety)**, **MR3 (Type Safety)**, and **MR4 (Dependency Audit)** are covered by always-on skill files that agents load directly. The full methodology, attack vectors, and mandatory checklists live in those skills — they are NOT duplicated here.
+>
+> | Rule | Skill File | Trigger |
+> |------|-----------|---------|
+> | MR1 | `~/.claude/agents/skills/sui/ability-analysis/SKILL.md` | Always |
+> | MR2 | `~/.claude/agents/skills/sui/bit-shift-safety/SKILL.md` | Always |
+> | MR3 | `~/.claude/agents/skills/sui/type-safety/SKILL.md` | Always |
+> | MR4 | `~/.claude/agents/skills/sui/dependency-audit/SKILL.md` | EXTERNAL_LIB flag |
+>
+> If you are a breadth or depth agent: you already have these skills loaded. Do NOT request them again. Apply the skill methodology directly.
 
 ---
 
@@ -794,6 +698,22 @@ Before marking ANY finding REFUTED, the analyst MUST:
 1. State what evidence would PROVE this IS exploitable
 2. Confirm they have checked for that evidence
 3. If evidence is unavailable (not "doesn't exist") -> CONTESTED
+
+### Safe Patterns — Do Not Flag
+
+The following patterns are known-safe in standard Sui Move usage. Do NOT report them as findings **unless the guard is incomplete, incorrectly positioned, or the specific instance deviates from the safe form described**.
+
+| Pattern | Why It's Safe | Flag Only If |
+|---------|--------------|-------------|
+| Default arithmetic (Move aborts on overflow/underflow) | Move VM aborts the transaction on any integer overflow or underflow | Explicit unchecked math libraries are used, or the abort causes a DoS on a critical path (abort is safe for correctness but may be a liveness issue) |
+| Owned objects as function parameters (`obj: Object`) | Sui's ownership model ensures only the owner can pass the object | Object is shared (`share_object`) — shared objects have different access semantics and require additional validation |
+| `transfer::freeze_object` for immutable config | Frozen objects cannot be mutated or deleted | Object was shared before freezing (race window), or the freeze happens conditionally |
+| Protocol-favoring rounding (round against the user) | Standard DeFi practice — protocol takes dust | Rounding is inconsistent across paired operations, or rounding compounds to material amounts |
+| `key` + `store` abilities on objects with `transfer::transfer` | Standard object lifecycle — Sui enforces ownership | Object has `store` without `key` enabling wrapping attacks, or `drop` allows silent destruction of value-bearing objects |
+| One-time witness pattern (`init(witness: MODULENAME)`) | Guarantees module initialization runs exactly once | The witness type has `drop` but the init function doesn't consume it, or init logic is incomplete |
+| Two-step admin transfer (propose + accept pattern) | Prevents accidental transfer to wrong address | Only one step exists, or acceptance lacks capability check |
+
+**Important**: "Safe pattern detected" is NOT a reason to skip analysis of the surrounding code.
 
 ### Evidence Source Enforcement
 

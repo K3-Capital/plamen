@@ -140,6 +140,15 @@ When verdict is CONTESTED or FALSE_POSITIVE, document the failure details for po
 
 These error traces feed into the post-verification depth pass (AD-6) if budget remains.
 
+## FIX GENERATION (POC-PASS only)
+If your PoC PASSES (verdict = CONFIRMED with [POC-PASS]):
+1. Write a minimal diff-style fix (smallest change that eliminates the bug)
+2. If time permits, re-run the PoC with the fix applied to verify it no longer triggers
+3. Include in your output under `### Suggested Fix` per phase5-poc-execution.md
+4. If the fix is non-trivial (architectural, multi-file): write a 1-sentence description instead of a diff
+
+Do NOT generate fixes for [CODE-TRACE] or [POC-FAIL] findings.
+
 Write FULL PoC to {SCRATCHPAD}/verify_{hypothesis_id}.md
 Include the mandatory `### Execution Result` and `### Fuzz Result` (Medium+) sections per phase5-poc-execution.md.
 
@@ -151,15 +160,15 @@ Return: CONFIRMED/FALSE_POSITIVE/CONTESTED + evidence tag + 3-sentence justifica
 
 ---
 
-## Skeptic-Judge Verification (Thorough mode only, HIGH/CRIT/MEDIUM)
+## Skeptic-Judge Verification (Thorough mode only, HIGH/CRIT)
 
 > **Purpose**: Challenge the standard verifier's reasoning. Nobody audits the auditor - this step does.
-> **Trigger**: Thorough mode, findings with severity HIGH, CRITICAL, or MEDIUM, after standard Phase 5 verification completes.
+> **Trigger**: Thorough mode, findings with severity HIGH or CRITICAL, after standard Phase 5 verification completes.
 > **Architecture**: Standard verifier → Skeptic agent (sonnet) → Judge agent (haiku, only if disagreement)
 
 ### Step 1: Spawn Skeptic Agent (per finding)
 
-For each HIGH/CRIT/MEDIUM finding after standard verification:
+For each HIGH/CRIT finding after standard verification:
 
 ```
 Task(subagent_type="security-verifier", model="sonnet", prompt="
@@ -253,9 +262,9 @@ Return: 'RULING: {final_verdict} - {STANDARD_WINS/SKEPTIC_WINS/CONTESTED}'
 
 | Component | Cost |
 |-----------|------|
-| Skeptic agents | 1 sonnet per HIGH/CRIT/MEDIUM finding (~8-20 agents typical) |
-| Judge agents | 1 haiku per disagreement (~0-5 agents typical) |
-| **Total** | ~8-25 agents (only in Thorough mode) |
+| Skeptic agents | 1 sonnet per HIGH/CRIT finding (~3-8 agents typical) |
+| Judge agents | 1 haiku per disagreement (~0-3 agents typical) |
+| **Total** | ~3-11 agents (only in Thorough mode) |
 
 ---
 

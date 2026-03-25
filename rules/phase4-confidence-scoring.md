@@ -101,9 +101,13 @@ Iteration 2+ agents receive this framing:
 *1. Read the analysis path summary (what was explored). Your job is to explore what was NOT.*
 *2. For each CONFIRMED conclusion from iteration 1: ask 'what adjacent bug does this analysis OBSCURE?' What is the OPPOSITE interpretation of the same code?*
 *3. For each REFUTED conclusion from iteration 1: ask 'what enabler makes this exploitable after all?'*
-*4. You MUST produce at least one finding or observation that CONTRADICTS or EXTENDS the previous analysis. If you agree with everything, you have not done your job."*
+*4. You MUST explore at least one path that the previous analysis did NOT. If you find no new vulnerability after exploring that path, state what you explored and why it is safe — that is a valid output."*
+
+**IMPORTANT**: Point 4 requires EXPLORATION, not PRODUCTION. A DA agent that explores a new path and concludes "this is safe because X" has done its job. A DA agent that fabricates a finding to satisfy a quota has not. The value of iteration 2 is the unexplored path coverage, not the finding count.
 
 Iteration 2+ agents are told the analysis path (what was explored) but NOT the conclusions (what was decided). They receive analysis path summaries from AD-1 but no verdicts.
+
+**MANDATORY**: The orchestrator MUST include the INVARIANT CONSISTENCY CHECK (HARD GATE) directive from the depth templates in every iteration 2+ agent prompt. DA agents are not exempt from the gate — they must check their findings against documented operational implications before CONFIRMING at Medium+. The orchestrator copies the directive from `phase4b-depth-templates.md` § INVARIANT CONSISTENCY CHECK into the DA agent prompt.
 
 ### Rule AD-3: Focused Input Cap
 

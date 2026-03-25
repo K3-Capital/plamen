@@ -390,6 +390,25 @@ Model BOTH attack types:
 
 ---
 
+## Safe Patterns — Do Not Flag
+
+The following patterns are known-safe in standard usage. Do NOT report them as findings **unless the guard is incomplete, incorrectly positioned, or the specific instance deviates from the safe form described**.
+
+| Pattern | Why It's Safe | Flag Only If |
+|---------|--------------|-------------|
+| `unchecked { }` in Solidity ≥0.8 | Compiler reverts on overflow/underflow outside unchecked blocks. Developers use unchecked for intentional wrapping or proven-safe arithmetic. | The unchecked block contains a division (no overflow protection), or the arithmetic CAN legitimately overflow/underflow at realistic values |
+| `MINIMUM_LIQUIDITY` burn on first deposit (Uniswap V2 pattern) | Prevents share inflation / first-depositor attacks by locking minimum shares | The burn amount is configurable or insufficient relative to token decimals |
+| SafeERC20 (`safeTransfer` / `safeTransferFrom` / `safeApprove`) | Handles void-return tokens and reverts on failure | The safe wrapper is used inconsistently (some paths use raw `transfer`) |
+| `nonReentrant` modifier on a function | Prevents same-contract reentrancy | Cross-contract reentrancy via a different entry point that lacks the modifier; cross-function reentrancy where two `nonReentrant` functions share storage assumptions but can be interleaved via callbacks; or read-only reentrancy where state is read by another contract mid-execution |
+| Two-step ownership transfer (`transferOwnership` + `acceptOwnership`) | Prevents accidental transfer to wrong address | Only one step exists, or acceptance has no access control |
+| Consistent protocol-favoring rounding (round against the user) | Standard DeFi practice — protocol takes dust, user cannot extract extra | Rounding is inconsistent across paired operations (deposit rounds down but withdraw also rounds down = user gets less both ways), or rounding compounds to material amounts |
+| `type(uint256).max` approval to trusted internal contracts | Gas optimization for known-safe internal interactions | The approved contract is upgradeable or externally controllable |
+| Standard `receive()` / `fallback()` that only accept ETH | Required for protocols handling native ETH | The function contains logic beyond accepting ETH, or emits no event for tracking |
+
+**Important**: "Safe pattern detected" is NOT a reason to skip analysis of the surrounding code. The pattern being safe means the PATTERN ITSELF is not a finding — adjacent code may still be vulnerable.
+
+---
+
 ## Evidence Source Enforcement
 
 **Any REFUTED verdict where ALL external behavior evidence is tagged [MOCK], [EXT-UNV], or [DOC] is automatically escalated to CONTESTED.** Only these evidence types can support REFUTED for external contract behavior:

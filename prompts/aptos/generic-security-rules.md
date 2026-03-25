@@ -493,155 +493,18 @@ public fun flash_repay<T>(pool: &mut Pool<T>, coin: Coin<T>, receipt: FlashLoanR
 
 ---
 
-## Rule MR1: Ability Analysis (Shared Move Rule)
+## Rules MR1–MR4: Shared Move Rules (SKILL REFERENCE)
 
-**Pattern**: Every struct definition with ability annotations (`copy`, `drop`, `store`, `key`)
-**Check**: Are the declared abilities security-appropriate for the struct's purpose?
-
-| Ability | Grants | Security Risk If Misapplied |
-|---------|--------|-----------------------------|
-| `copy` | Value can be duplicated via implicit/explicit copy | Token/receipt/capability duplication - value created from nothing |
-| `drop` | Value can be silently discarded (goes out of scope without consumption) | Obligation bypass - hot-potato receipt silently dropped instead of consumed |
-| `store` | Value can be placed in global storage by any module with `key` access | Value escapes module control - can be stored in attacker-controlled resources |
-| `key` | Value can exist as top-level resource in global storage via `move_to` | Resource can be `move_to`/`move_from`'d - unauthorized storage or extraction |
-
-**Mandatory checks per struct category**:
-
-1. **Value tokens** (coins, shares, receipts representing economic value): MUST NOT have `copy` (prevents duplication). `Coin<T>` and `FungibleAsset` correctly lack `copy`.
-   ```move
-   struct Ticket has copy, drop { value: u64 } // BUG: copy allows using ticket twice
-   // Correct: struct Ticket has store { value: u64 }
-   ```
-
-2. **Hot-potato / obligation structs** (flash loan receipts, lock tickets): MUST NOT have `drop` (forces consumption). MUST NOT have `store` or `key` (prevents stashing to avoid consumption within the transaction).
-   ```move
-   struct FlashLoanReceipt has drop { amount: u64 } // BUG: drop allows skipping repayment
-   // Correct: struct FlashLoanReceipt { amount: u64 } // No abilities = must be consumed
-   ```
-
-3. **Capability structs** (admin caps, mint rights, signer capabilities): SHOULD NOT have `copy` (prevents capability duplication). SHOULD NOT have `store` unless intentional delegation is designed.
-   ```move
-   struct MintCap has copy, store { ref: MintRef } // BUG: copy allows duplication
-   // Correct: struct MintCap has store { ref: MintRef } // store only for controlled persistence
-   ```
-
-4. **Witness / type-witness structs** (one-time-use proofs for module initialization): SHOULD NOT have `copy` or `store` (ensures single use within module initialization).
-   ```move
-   struct InitWitness has drop {} // Correct: used once, then dropped
-   struct InitWitness has copy, drop {} // BUG: copy allows reuse
-   ```
-
-5. **Phantom type parameters**: `phantom T` means T is not used at runtime, only at compile-time type checking. If no runtime type check exists, attacker can instantiate with any T.
-   ```move
-   struct Wrapper<phantom T> has key, store { value: u64 }
-   // Can be instantiated as Wrapper<FakeToken> if no runtime type_info check
-   ```
-
-**Action**: For every struct in scope, verify abilities match the struct's security role. Flag: `copy` on value types, `drop` on obligation types, `store` on capability types that should not be transferable. Enumerate all structs with `copy` or `drop` that hold value or represent uniqueness.
-
----
-
-## Rule MR2: Bit-Shift Safety (Shared Move Rule)
-
-**Pattern**: Any use of `<<` (left shift) or `>>` (right shift) operators
-**Check**: Is the shift amount guaranteed to be less than the bit width of the operand type?
-
-**CRITICAL**: Move aborts on shift >= bit width. This was the root cause of the **$223M Cetus hack** where an unchecked shift amount in a fixed-point math library produced 0 instead of the expected value, enabling an attacker to drain liquidity pools.
-
-**Vulnerability pattern**:
-```move
-let result = 1u128 << amount; // If amount >= 128, ABORTS (DoS) or produces 0 (on some VMs)!
-```
-
-| Operand Type | Bit Width | Max Safe Shift | Required Assert |
-|-------------|-----------|---------------|-----------------|
-| `u8` | 8 | 7 | `assert!(shift_amount < 8, E_SHIFT_OVERFLOW)` |
-| `u16` | 16 | 15 | `assert!(shift_amount < 16, E_SHIFT_OVERFLOW)` |
-| `u32` | 32 | 31 | `assert!(shift_amount < 32, E_SHIFT_OVERFLOW)` |
-| `u64` | 64 | 63 | `assert!(shift_amount < 64, E_SHIFT_OVERFLOW)` |
-| `u128` | 128 | 127 | `assert!(shift_amount < 128, E_SHIFT_OVERFLOW)` |
-| `u256` | 256 | 255 | `assert!(shift_amount < 256, E_SHIFT_OVERFLOW)` |
-
-**Mandatory checks**:
-1. Is the shift amount a literal constant? (SAFE - compiler validates)
-2. Is the shift amount derived from user input or computed from state? (CHECK bounds)
-3. Is the shift amount bounded by an explicit check before the shift operation? (SAFE if bound < bit width)
-4. Can the computation path produce a shift amount >= bit width under ANY input? (FINDING if yes)
-5. For compound expressions: trace the shift amount to its source, verify bounds at every step
-
-**Impact**: If used in price/amount calculation, can produce 0 where nonzero expected -> division by zero, infinite minting, free extraction. If abort: DoS on all dependent functions.
-
-**Action**: For every `<<` and `>>` operation in the codebase, trace the shift amount to its source. If user-controlled or computed without bounds checking, flag as potential Critical finding (extraction) or minimum Medium (DoS via abort).
-
----
-
-## Rule MR3: Type Safety - Generic and Phantom Type Parameters (Shared Move Rule)
-
-**Pattern**: Functions or structs with generic type parameters (`<T>`, `<phantom T>`)
-**Check**: Can an attacker substitute unexpected types to bypass security invariants?
-
-Move's type system is strong at compile time but generic functions can be instantiated with ANY type satisfying ability constraints. Runtime validation is needed when business logic depends on specific types.
-
-**Attack vectors**:
-
-| Vector | Description | Example |
-|--------|-------------|---------|
-| Generic type substitution | Attacker calls `deposit<FakeToken>()` instead of `deposit<USDC>()` | Deposits worthless token, withdraws valuable token |
-| Phantom type confusion | `Pool<phantom A, phantom B>` instantiated with swapped types | Pair confusion in DEX |
-| Type witness forgery | Module expects `TypeWitness<T>` as proof of authorization but `T` is attacker-controlled | Authorization bypass |
-| Missing type constraints | Generic `T` without required ability constraints allows unexpected types | `T: store` missing causes abort with non-storable types |
-| `mem::swap` attacks | Mutable references (`&mut T`) swapped via `std::mem::swap` | Swap zero-value coin for vault's full-value coin if both `&mut` refs accessible |
-
-**Mandatory checks**:
-1. For every generic type parameter in public functions: is it constrained to expected types (via type witness, allowlist, or module-level restriction)?
-   ```move
-   public fun deposit<T>(coin: Coin<T>) {
-       // Must validate T is an approved coin type, not any random Coin<T>
-       assert!(type_info::type_of<T>() == type_info::type_of<USDC>(), E_INVALID_COIN);
-   }
-   ```
-2. For every phantom type parameter: does the phantom type correctly enforce type-level invariants (e.g., `Coin<phantom CoinType>` distinguishes different coins)?
-3. For every type witness pattern: is the witness consumed (not copyable) and generated only by authorized modules?
-4. Are ability constraints on type parameters sufficient? (e.g., `T: key + store` when only `key` is needed exposes to `store`-based attacks)
-5. Can `mem::swap` be used to exchange valuable mutable references? Check if a function takes `&mut Coin<T>` and the attacker can provide their own mutable reference of the same type.
-
-**Action**: For every generic function and struct, verify type parameters cannot be adversarially substituted. Pay special attention to `public entry` functions where the type parameter is supplied by the transaction sender.
-
----
-
-## Rule MR4: Dependency Audit (Shared Move Rule)
-
-**Pattern**: External module dependencies via `use` statements
-**Check**: Are dependencies trusted, interface-stable, and upgrade-risk assessed?
-
-**Aptos dependency categories**:
-
-| Category | Trust Level | Check |
-|----------|-----------|-------|
-| `aptos_framework::*` | HIGH (governance-controlled) | Interface stability across framework upgrades |
-| `aptos_std::*` | HIGH (governance-controlled) | Same as above |
-| `aptos_token_objects::*` | HIGH (governance-controlled) | Same as above |
-| Third-party published modules | VARIABLE | Publisher identity, upgrade policy, code audit status |
-| Protocol's own modules | SELF | Internal consistency, correct `friend` declarations |
-
-**Mandatory checks**:
-
-1. **Upgrade policy assessment**: For each dependency, determine upgrade policy:
-   | Policy | Risk | Check |
-   |--------|------|-------|
-   | Immutable | None - code cannot change | Safe |
-   | Compatible | Can add functions, cannot change existing signatures | Low - new functions could create unexpected entry points |
-   | Arbitrary | Can change anything | HIGH - all assumptions about behavior may break |
-
-2. **Interface stability**: Does the module use the external function's EXACT signature? Compatible upgrades can add functions but not change existing signatures in Aptos.
-
-3. **Trust boundary**: Is the dependency publisher's address validated (not spoofable)? Module addresses are part of the fully-qualified name - but verify the address is the expected one.
-
-4. **Transitive dependencies**: Does the dependency itself depend on modules that could be upgraded? A dependency's dependency being upgradeable can also change behavior.
-
-5. **Framework dependency awareness**: Dependencies on `aptos_framework`, `aptos_std`, `aptos_token_objects` are governed by Aptos governance and can change via framework upgrades. Rare but possible - note as trust assumption.
-
-**Action**: For every `use` statement importing from a non-framework module, assess upgrade risk and interface stability. Flag dependencies on upgradeable third-party modules as trust assumptions.
+> **MR1 (Ability Analysis)**, **MR2 (Bit-Shift Safety)**, **MR3 (Type Safety)**, and **MR4 (Dependency Audit)** are covered by always-on skill files that agents load directly. The full methodology, attack vectors, and mandatory checklists live in those skills — they are NOT duplicated here.
+>
+> | Rule | Skill File | Trigger |
+> |------|-----------|---------|
+> | MR1 | `~/.claude/agents/skills/aptos/ability-analysis/SKILL.md` | Always |
+> | MR2 | `~/.claude/agents/skills/aptos/bit-shift-safety/SKILL.md` | Always |
+> | MR3 | `~/.claude/agents/skills/aptos/type-safety/SKILL.md` | Always |
+> | MR4 | `~/.claude/agents/skills/aptos/dependency-audit/SKILL.md` | EXTERNAL_LIB flag |
+>
+> If you are a breadth or depth agent: you already have these skills loaded. Do NOT request them again. Apply the skill methodology directly.
 
 ---
 
@@ -932,6 +795,21 @@ Before marking ANY finding REFUTED, the analyst MUST:
 1. State what evidence would PROVE this IS exploitable
 2. Confirm they have checked for that evidence
 3. If evidence is unavailable (not "doesn't exist") -> CONTESTED
+
+### Safe Patterns — Do Not Flag
+
+The following patterns are known-safe in standard Aptos Move usage. Do NOT report them as findings **unless the guard is incomplete, incorrectly positioned, or the specific instance deviates from the safe form described**.
+
+| Pattern | Why It's Safe | Flag Only If |
+|---------|--------------|-------------|
+| Default arithmetic (Move aborts on overflow/underflow) | Move VM aborts the transaction on any integer overflow or underflow | Explicit unchecked math libraries are used, or the abort causes a DoS on a critical path (abort is safe for correctness but may be a liveness issue) |
+| `acquires` annotation on functions accessing global storage | Compiler enforces that all global resource accesses are declared | Resource accessed indirectly via a called function that doesn't declare `acquires` (compiler catches most cases but not all dynamic paths) |
+| `key` + `store` abilities on resources with `move_to`/`move_from` | Standard resource lifecycle — Move enforces single-ownership | Resource has `copy` ability when it shouldn't (enables duplication), or `drop` allows silent destruction of value-bearing resources |
+| Protocol-favoring rounding (round against the user) | Standard DeFi practice — protocol takes dust | Rounding is inconsistent across paired operations, or rounding compounds to material amounts |
+| `friend` visibility for cross-module internal calls | Restricts which modules can call sensitive functions | Friend list is too broad, or a friend module is upgradeable and could be replaced with a malicious version |
+| Two-step admin transfer (propose + accept pattern) | Prevents accidental transfer to wrong address | Only one step exists, or acceptance has no signer check |
+
+**Important**: "Safe pattern detected" is NOT a reason to skip analysis of the surrounding code.
 
 ### Evidence Source Enforcement
 

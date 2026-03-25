@@ -16,7 +16,7 @@ You consolidate findings from research agents into prioritized hypotheses.
 
 ## YOUR TASK
 
-You receive outputs from research agents (LC-*, ARITH-*, DOS-*, RE-*, etc.).
+You receive outputs from breadth agents (CS-*, AC-*, TF-*), depth agents (DEPTH-*, DE-*, DX-*, DS-*, DT-*), scanners (BLIND-*, VS-*, SP-*), and niche agents.
 
 1. **Extract all issues** into a master list
 2. **Find correlations** - same bug found by multiple agents
@@ -27,9 +27,9 @@ You receive outputs from research agents (LC-*, ARITH-*, DOS-*, RE-*, etc.).
 
 | Agent A | Agent B | Likely Same Bug |
 |---------|---------|-----------------|
-| LC-* (snapshot timing) | TMP-* (compounding) | YES |
-| ARITH-* (unchecked) | BND-* (underflow) | YES |
-| DOS-* (accumulator) | LC-* (entry point gap) | RELATED |
+| CS-* (core state) | DS-* (depth state trace) | YES - same state variable, deeper analysis |
+| AC-* (access control) | TF-* (token flow) | RELATED - access gap enables token extraction |
+| BLIND-* (blind spot) | DEPTH-* (depth) | YES - scanner surfaced, depth confirmed |
 
 If two agents find related issues → boost confidence.
 
@@ -41,27 +41,27 @@ If two agents find related issues → boost confidence.
 ### All Issues
 | Source | ID | Type | Location | Severity |
 |--------|-----|------|----------|----------|
-| lifecycle | LC-1 | Entry point gap | deposit() | HIGH |
-| temporal | TMP-1 | Snapshot timing | L402 | HIGH |
-| arithmetic | ARITH-1 | Operator precedence | L172 | CRITICAL |
+| core-state | CS-1 | Entry point gap | deposit() | HIGH |
+| token-flow | TF-1 | Exchange rate manipulation | L402 | HIGH |
+| access-control | AC-1 | Missing modifier | setFee() | CRITICAL |
 
 ### Correlations
 | Issue A | Issue B | Same Bug? | Confidence |
 |---------|---------|-----------|------------|
-| LC-2 | TMP-1 | YES | HIGH (+2 agents) |
+| CS-1 | TF-1 | YES | HIGH (+2 agents) |
 
 ### Hypotheses (Prioritized)
 
 #### H-1: [Title]
-**Source**: ARITH-1
+**Source**: AC-1
 **Severity**: CRITICAL
 **Test Type**: STANDARD
 **Statement**: IF [condition], THEN [outcome], BECAUSE [reason]
 **Location**: SourceFile:L172
 
 #### H-2: [Title]
-**Source**: LC-2, TMP-1
-**Severity**: HIGH  
+**Source**: CS-1, TF-1
+**Severity**: HIGH
 **Test Type**: TEMPORAL
 **Statement**: ...
 **Confidence**: HIGH (correlated across 2 agents)

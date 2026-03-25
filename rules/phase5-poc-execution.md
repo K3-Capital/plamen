@@ -17,9 +17,21 @@
 
 ---
 
-## Impact Premise Verification (MANDATORY)
+## Impact Premise Verification (MANDATORY — HARD GATE)
 
-Before writing the PoC, identify the finding's claimed HARM in one sentence — not the mechanism, but the consequence. The PoC must test the harm directly. If the finding claims tokens are locked, test that withdrawal/claim fails — not that the tokens exist in a mapping. If the finding claims accounting is desynchronized, test that a user receives wrong amounts — not that a variable wasn't updated.
+Before writing the PoC, identify the finding's claimed HARM in one sentence — not the mechanism, but the consequence. The PoC MUST assert the HARM directly. A PoC that only proves a function can be called, a state can be reached, or a path exists is NOT a `[POC-PASS]` — it is a mechanism test, not a harm test.
+
+**Examples of mechanism tests (INSUFFICIENT for [POC-PASS])**:
+- "startLiquidation succeeds while market is active" — proves a function call, not user loss
+- "parameter can be set to zero" — proves a setter works, not that the zero value causes harm
+- "reentrancy callback is triggered" — proves a callback fires, not that state is corrupted
+
+**Examples of harm tests (REQUIRED for [POC-PASS])**:
+- "claimant receives 15% less than their pro-rata share after attack sequence"
+- "user's withdrawal reverts permanently after parameter is set to zero"
+- "attacker extracts 1.5x their fair share via reentrancy before guard triggers"
+
+If you cannot construct a harm assertion, the finding is `[CODE-TRACE]` at best. If the harm assertion fails (user receives correct amounts, withdrawal succeeds, no excess extracted), the finding is `[POC-FAIL]`.
 
 ## Execution Protocol
 
@@ -45,6 +57,25 @@ Before writing the PoC, identify the finding's claimed HARM in one sentence — 
 ```
 
 If execution was not attempted, explain why (no build environment, no test framework). Silent omission is not acceptable.
+
+6. **Generate fix** (`[POC-PASS]` findings only): After a passing PoC confirms the bug, write a minimal diff-style fix. The verifier already has deep context from the PoC — this is incremental work, not a separate analysis task.
+
+```markdown
+### Suggested Fix
+```diff
+- vulnerable line(s)
++ fixed line(s)
+```
+**Fix scope**: {1-sentence description of what the fix does}
+**Verified**: {YES — re-ran PoC with fix applied and it no longer triggers / NO — fix not mechanically verified}
+```
+
+   **Rules for fix generation**:
+   - Only for `[POC-PASS]` findings. `[CODE-TRACE]` and `[POC-FAIL]` findings do NOT get fixes.
+   - Keep fixes minimal — the smallest change that eliminates the vulnerability. Do not refactor surrounding code.
+   - If the fix is non-trivial (architectural change, multi-file, or could introduce new issues): write `**Fix**: Architectural change required — {1-sentence description}. No inline diff provided.`
+   - If time permits, re-run the PoC with the fix applied to verify it no longer triggers. Tag as `Verified: YES/NO`.
+   - Tier writers paste the fix verbatim into the report — do not regenerate.
 
 ---
 

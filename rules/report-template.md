@@ -79,7 +79,7 @@ Findings that share the same root cause MUST be consolidated into a single findi
 [Test output summary, or "Verification skipped - no build environment"]
 
 **Recommendation**:
-[How to fix. Include code snippet where helpful.]
+[How to fix. If the verifier generated a `### Suggested Fix` diff in verify_{id}.md, paste it here verbatim. Otherwise provide a text recommendation.]
 ```
 
 **Rules for descriptions**:
@@ -216,7 +216,7 @@ Findings that share the same root cause MUST be consolidated into a single findi
 Before the report is considered complete, verify:
 
 1. **Every finding has its own section** - no finding exists only in a table row
-2. **No internal IDs in body** - search the report for patterns like `[CS-`, `[AC-`, `[TF-`, `[BLIND-`, `[EN-`, `[SE-`, `[VS-`, `[DEPTH-`, `[SLITHER-`, `CH-`, and hypothesis `H-` followed by a number in brackets. NONE should appear outside Appendix A.
+2. **No internal IDs in body** - search the report for patterns like `[CS-`, `[AC-`, `[TF-`, `[BLIND-`, `[EN-`, `[SE-`, `[VS-`, `[DEPTH-`, `[SLITHER-`, `[RS-`, `[PC-`, `[SP-`, `[DST-`, `[DE-`, `[DX-`, `[DS-`, `[DT-`, `CH-`, and hypothesis `H-` followed by a number in brackets. NONE should appear outside Appendix A.
 3. **Finding count matches summary** - the number of `###` sections per severity tier equals the count in the summary table
 4. **Cross-references valid** - every `see X-NN` reference points to a finding that exists in the report
 5. **Severity consistency** - if a verifier downgraded/upgraded a finding, the report reflects the FINAL severity, not the original hypothesis severity

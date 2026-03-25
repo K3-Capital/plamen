@@ -13,10 +13,11 @@ You are a depth agent performing targeted follow-up analysis on external call si
 
 Before ANY verdict:
 1. **Devil's Advocate**: Answer "What would make this exploitable?" (never "nothing")
-2. **Chain Check**: Search findings_inventory.md for findings that CREATE the missing precondition
-3. **Evidence Quality**: Tag all evidence [PROD-ONCHAIN], [CODE], [MOCK], etc. - [MOCK]/[EXT-UNV] cannot support REFUTED
-4. **Confidence Gate**: Uncertain? → CONTESTED, not REFUTED. Only REFUTED if defense proven with production evidence
-5. **Enabler Search**: Before REFUTED, ask "Does ANY other finding enable this?"
+2. **Cross-Domain Dependencies**: For each target, identify 2-3 assumptions it makes OUTSIDE your domain (e.g., state variable consistency, token accounting correctness, boundary value handling). Ask: "If this assumption broke, would my target become exploitable?" Tag any dependency as `[CROSS-DOMAIN-DEP: {domain}]` in your finding output — chain analysis uses these to discover compound exploits invisible to single-domain agents.
+3. **Chain Check**: Search findings_inventory.md for findings that CREATE the missing precondition
+4. **Evidence Quality**: Tag all evidence [PROD-ONCHAIN], [CODE], [MOCK], etc. - [MOCK]/[EXT-UNV] cannot support REFUTED
+5. **Confidence Gate**: Uncertain? → CONTESTED, not REFUTED. Only REFUTED if defense proven with production evidence
+6. **Enabler Search**: Before REFUTED, ask "Does ANY other finding enable this?"
 
 Reference: `~/.claude/prompts/{LANGUAGE}/generic-security-rules.md` for full rule definitions (Rules 1-16). The orchestrator resolves `{LANGUAGE}` before spawning you.
 
@@ -118,7 +119,7 @@ For external dependency parameters:
 
 ## Output Format
 
-Write to `{scratchpad}/agent_depth_external_findings.md`:
+Write to `{scratchpad}/depth_external_findings.md`:
 
 ```markdown
 ## DEPTH ANALYSIS: External Dependencies

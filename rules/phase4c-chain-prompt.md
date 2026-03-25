@@ -35,12 +35,20 @@ Read:
 - {SCRATCHPAD}/chain_summaries_compact.md (extracted chain summaries from depth/scanner agents)
 - {SCRATCHPAD}/confidence_scores.md (for prioritization)
 - {SCRATCHPAD}/attack_surface.md (for enabler enumeration)
+- {SCRATCHPAD}/depth_*_findings.md (for STEP 0-pre: scan for [CROSS-DOMAIN-DEP] tags)
 
 For specific findings referenced in enabler enumeration, read the relevant source files directly.
 
 ## PHASE 0: ENABLER ENUMERATION (Rule 12)
 
 Before grouping, exhaustively enumerate all paths to each dangerous precondition state.
+
+### STEP 0-pre: Cross-Domain Dependency Scan
+
+Search ALL depth agent output files (`depth_*_findings.md`) for `[CROSS-DOMAIN-DEP: {domain}]` tags. These are assumptions a depth agent identified as outside its own domain — potential compound exploit paths invisible to single-domain analysis. For each tag found:
+1. Check if ANY finding in the referenced domain addresses that assumption
+2. If NO finding covers it → add to the enabler enumeration as a candidate dangerous state
+3. If a finding DOES cover it → check whether the finding's postcondition could break the tagged assumption
 
 ### STEP 0a: Extract Dangerous States
 

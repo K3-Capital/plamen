@@ -76,11 +76,14 @@ A finding without at least 2 depth evidence tags is INCOMPLETE and will score po
 ## EXPLOITATION TRACE MANDATE
 For every Medium+ finding, produce a concrete exploitation trace: attacker action → state change → concrete profit/loss in dollar terms. 'Validation bypassed' or 'state corrupted' is NOT a terminal state — trace until tokens move to an attacker-controlled address, users lose measurable value, OR the attacker gains a privileged state that enables further exploitation (document the enabled capabilities). 'By design' and 'not exploitable' are valid conclusions ONLY after completing this trace. If you cannot construct a trace showing the defense, the finding is CONFIRMED.
 
-## INVARIANT CONSISTENCY CHECK
-For each finding you CONFIRM at Medium+ severity, check: does this finding's claimed impact contradict any Operational Implication in design_context.md? If a finding claims tokens are locked, lost, or desynchronized, verify that claim against the documented accounting model. If the claim contradicts a documented implication and you cannot explain why the invariant is insufficient or broken, downgrade to CONTESTED with the contradiction noted.
+## INVARIANT CONSISTENCY CHECK (HARD GATE)
+For each finding you CONFIRM at Medium+ severity, you MUST:
+1. Read the Operational Implications section in design_context.md
+2. Check: does this finding's claimed impact contradict any documented implication?
+3. If the finding claims tokens are locked, lost, or desynchronized — trace the ACTUAL token/object flow (source → destination → balance checks) and verify the claim against the documented accounting model
+4. If the claim contradicts a documented implication and you cannot demonstrate with concrete code evidence why the invariant is insufficient or broken, downgrade to CONTESTED with the contradiction noted
 
-## DISCOVERY MODE
-You are in DISCOVERY mode. Your job is to SURFACE potential vulnerabilities, not to filter them. When uncertain whether something is exploitable, ERR ON THE SIDE OF REPORTING IT -- the verification phase (Phase 5) will validate or refute. A false negative (missed bug) is far more costly than a false positive (reported non-bug). Report anything suspicious with your evidence and let verification sort it out.
+This is a HARD GATE that applies to every Medium+ finding. You cannot CONFIRM a finding whose impact contradicts documented operational implications without explaining the contradiction with code references. "Looks suspicious" is not sufficient for CONFIRMED — trace the actual state to prove the harm.
 
 ## PART 1: GAP-TARGETED DEEP ANALYSIS (PRIMARY -- 80% effort)
 
@@ -248,11 +251,8 @@ For EVERY question you investigate, apply at least 2 of these 3 techniques:
 2. **Parameter Variation**: Tag: `[VARIATION:param A→B → outcome]`
 3. **Trace to Termination**: Tag: `[TRACE:path→outcome at L{N}]`
 
-## INVARIANT CONSISTENCY CHECK
-For each finding you CONFIRM at Medium+ severity, check: does this finding's claimed impact contradict any Operational Implication in design_context.md? If the claim contradicts a documented implication and you cannot explain why the invariant is insufficient or broken, downgrade to CONTESTED with the contradiction noted.
-
-## DISCOVERY MODE
-ERR ON THE SIDE OF REPORTING. A false negative (missed bug) is far more costly than a false positive. Report anything suspicious with evidence.
+## INVARIANT CONSISTENCY CHECK (HARD GATE)
+For each finding you CONFIRM at Medium+ severity, you MUST check: does this finding's claimed impact contradict any Operational Implication in design_context.md? If the finding claims tokens are locked, lost, or desynchronized — trace the ACTUAL token/object flow and verify against the documented accounting model. If the claim contradicts a documented implication and you cannot demonstrate with concrete code evidence why the invariant is broken, downgrade to CONTESTED.
 
 ## EXPLOITATION TRACE MANDATE
 For every Medium+ finding, produce a concrete exploitation trace: attacker action → state change → concrete profit/loss in dollar terms. Trace until tokens move, users lose measurable value, OR the attacker gains a privileged state that enables further exploitation.

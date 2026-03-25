@@ -145,6 +145,7 @@ Use this output format:
 
 Write build result to {SCRATCHPAD}/build_status.md
 Include: `MEDUSA_AVAILABLE: true/false` (and version if available)
+Include: `REPO_SHAPE: squashed_import` if `git rev-list --count HEAD` returns 1, otherwise `REPO_SHAPE: normal_dev`. This tells FORK_ANCESTRY whether git history analysis is useful.
 
 ## TASK 2: Static Analysis Artifacts
 

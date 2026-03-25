@@ -410,7 +410,7 @@ Combine sections in this order:
 
 Before writing, verify:
 1. **Finding count matches summary** - count ### sections per severity tier, must equal summary table
-2. **No internal IDs in body** - scan for [CS-, [AC-, [TF-, [BLIND-, [EN-, [SE-, [VS-, [DEPTH-, [SLITHER-, CH-, and bracketed H- followed by numbers. NONE should appear outside Appendix A.
+2. **No internal IDs in body** - scan for [CS-, [AC-, [TF-, [BLIND-, [EN-, [SE-, [VS-, [DEPTH-, [SLITHER-, [RS-, [PC-, [SP-, [DST-, [DE-, [DX-, [DS-, [DT-, CH-, and bracketed H- followed by numbers. NONE should appear outside Appendix A.
 3. **Cross-references valid** - check the cross-reference map from report_index.md, ensure referenced IDs exist
 4. **No duplicate findings** - no two sections describe the same bug
 5. **All tier files present** - if any tier file is missing or empty, note it as 'Section pending'

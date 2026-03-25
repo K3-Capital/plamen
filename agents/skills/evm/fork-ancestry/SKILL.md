@@ -28,7 +28,13 @@ Grep the codebase for known parent signatures:
 | Balancer | `BPool\|WeightedPool\|BVault\|flashLoan.*userData` | Weighted pool forks |
 | Yearn | `Vault\|Strategy\|harvest\|totalDebt\|debtRatio` | Yield vault forks |
 
-**Output**: List of detected parents with confidence level (HIGH: 3+ patterns, MEDIUM: 2 patterns, LOW: 1 pattern).
+**Git-based detection** (complements code-pattern matching — catches forks that renamed all identifiers).
+Skip if `REPO_SHAPE: squashed_import` in `build_status.md` — single-commit repos have no meaningful git metadata.
+- Parse `.gitmodules` for submodule URLs pointing to known parent repos
+- Check `git remote -v` for origin URLs matching known parent organizations (compound-finance, Uniswap, aave, sushiswap, curvefi, yearn, OlympusDAO, balancer)
+- If a git-URL match is found but NO code-pattern match exists, flag as `GIT_ONLY_FORK` — the fork likely renamed all identifiers, which warrants deeper divergence analysis
+
+**Output**: List of detected parents with confidence level (HIGH: 3+ patterns, MEDIUM: 2 patterns, LOW: 1 pattern, GIT_ONLY: git URL match but no code patterns).
 
 ## 2. Query Known Parent Issues
 

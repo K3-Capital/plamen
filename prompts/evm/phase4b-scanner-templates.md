@@ -38,6 +38,15 @@ If ANY external token has findings covering ≤2 of 5 R11 dimensions AND uncover
 If ANY token has findings covering ≤2 of 5 dimensions AND the uncovered dimensions are applicable → PARTIAL BLIND SPOT.
 Applicable = the token type supports that interaction (e.g., NFTs don't have D4:Loop/Gas unless enumerable).
 
+## CHECK 1b: Unchecked ERC20 Transfer Return Values (Slither fallback)
+Skip this check if `SLITHER: AVAILABLE` in build_status.md (Slither's `unchecked-transfer` detector covers this).
+Grep for raw `.transfer(` and `.transferFrom(` calls (NOT `safeTransfer`/`safeTransferFrom`) on external token addresses. For each: is the return value checked (`require(token.transfer(...))`) or is SafeERC20 used? If neither, tokens like USDT that return false on failure will silently fail — state updates proceed but no tokens move.
+
+| Call Site | Token | Uses SafeERC20? | Return Value Checked? | Gap? |
+|-----------|-------|-----------------|----------------------|------|
+
+If raw `.transfer()`/`.transferFrom()` without return-value handling found → FINDING (MEDIUM: silent transfer failure with non-reverting tokens like USDT).
+
 ## CHECK 2: Governance-Changeable Parameter Coverage
 From constraint_variables.md, for each parameter with a setter function:
 

@@ -175,6 +175,16 @@
 - [ ] Error traces extracted from CONTESTED/FALSE_POSITIVE verifiers?
 - [ ] Post-verification depth spawned if budget remains AND error traces exist?
 
+## After Skeptic-Judge (Thorough mode only, after standard verification)
+
+- [ ] All HIGH/CRIT findings received skeptic agent? (Thorough mode only)
+- [ ] Skeptic agents used INVERSION MANDATE (opposite conclusion from standard)?
+- [ ] Skeptic agents made their OWN tool calls (not reusing standard verifier output)?
+- [ ] If skeptic DISAGREED: judge agent spawned with both verification files?
+- [ ] Judge used strictly mechanical evidence hierarchy (POC-PASS > CODE-TRACE)?
+- [ ] Final verdicts applied per ruling table (STANDARD_WINS/SKEPTIC_WINS/CONTESTED)?
+- [ ] skeptic_*.md and judge_*.md files exist in scratchpad for all processed findings?
+
 ## After Report Generation (Phase 6)
 
 - [ ] Step 6a: Index Agent completed -- report_index.md exists with clean IDs?

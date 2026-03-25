@@ -476,5 +476,20 @@ Chain analyzer must search ALL findings for enablers before accepting REFUTED. A
 ### Cross-Validation Before REFUTED
 REFUTED verdict requires state evidence (on-chain data, source code proof). If state evidence is unavailable → verdict is CONTESTED, not REFUTED.
 
+### Safe Patterns — Do Not Flag
+
+The following patterns are known-safe in standard Solana usage. Do NOT report them as findings **unless the guard is incomplete, incorrectly positioned, or the specific instance deviates from the safe form described**.
+
+| Pattern | Why It's Safe | Flag Only If |
+|---------|--------------|-------------|
+| Anchor `#[account(...)]` constraint macros (has_one, constraint, seeds) | Compile-time and runtime account validation | Constraints are incomplete (e.g., missing `has_one` for a related account), or seeds lack a discriminating component |
+| Checked math (default in Rust release builds with `overflow-checks = true`) | Panics on overflow/underflow | `overflow-checks` is disabled in Cargo.toml, or unchecked arithmetic is used via `wrapping_*`/`unchecked_*` methods in value-moving code |
+| `init` + `payer` + `space` for account creation | Standard Anchor account initialization with rent exemption | Space calculation is wrong (too small for data), or `realloc` is used later without proper checks |
+| Protocol-favoring rounding (round against the user) | Standard DeFi practice — protocol takes dust | Rounding is inconsistent across paired operations, or rounding compounds to material amounts |
+| `close = target` for account closing with lamport drain | Anchor handles zeroing data + lamport transfer atomically | Account can be resurrected in the same transaction (missing realloc guard), or close target is attacker-controllable |
+| Two-step authority transfer (propose + accept) | Prevents accidental transfer to wrong address | Only one step exists, or acceptance has no signer check |
+
+**Important**: "Safe pattern detected" is NOT a reason to skip analysis of the surrounding code.
+
 ### Evidence Source Enforcement
 [MOCK], [EXT-UNV], and [DOC] evidence CANNOT support a REFUTED verdict for findings involving external program behavior. Only [PROD-ONCHAIN], [PROD-SOURCE], [PROD-FORK], or [CODE] evidence (direct source reading of the external program) qualifies.

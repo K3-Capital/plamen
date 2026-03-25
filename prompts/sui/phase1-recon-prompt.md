@@ -316,6 +316,8 @@ SCRATCHPAD: {scratchpad}
    - After 3 attempts, document failure and continue
 5. Check for Move.lock file (dependency resolution lockfile)
 
+Also run: `git rev-list --count HEAD` — if result is 1, include `REPO_SHAPE: squashed_import`, otherwise `REPO_SHAPE: normal_dev`. This tells FORK_ANCESTRY whether git history analysis is useful.
+
 Write to {SCRATCHPAD}/build_status.md:
 ```markdown
 # Build Status

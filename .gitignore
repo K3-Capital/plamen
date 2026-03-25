@@ -67,3 +67,6 @@ Thumbs.db
 
 # ── Scripts (dev-only banner experiments) ─────────
 scripts/
+
+# ── Local-only working files (proposals, notes) ──
+local/

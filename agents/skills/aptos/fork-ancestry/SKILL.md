@@ -31,7 +31,13 @@ Grep the codebase for known parent signatures:
 | Aptos Fungible Asset Framework | `fungible_asset\|FungibleStore\|FungibleAsset\|primary_fungible_store` | FA standard consumers |
 | Pendleswap (Aptos) | `pendle\|pendleswap\|sy_token\|pt_token\|yt_token\|market_factory` | Yield tokenization forks |
 
-**Output**: List of detected parents with confidence level (HIGH: 3+ patterns, MEDIUM: 2 patterns, LOW: 1 pattern).
+**Git-based detection** (complements code-pattern matching — catches forks that renamed all identifiers).
+Skip if `REPO_SHAPE: squashed_import` in `build_status.md` — single-commit repos have no meaningful git metadata.
+- Parse `.gitmodules` for submodule URLs pointing to known parent repos
+- Check `git remote -v` for origin URLs matching known Aptos parent organizations (aptos-labs, econia-labs, pontem-network, thala-labs, pancakeswap)
+- If a git-URL match is found but NO code-pattern match exists, flag as `GIT_ONLY_FORK`
+
+**Output**: List of detected parents with confidence level (HIGH: 3+ patterns, MEDIUM: 2 patterns, LOW: 1 pattern, GIT_ONLY: git URL match but no code patterns).
 
 ## 2. Query Known Parent Issues
 

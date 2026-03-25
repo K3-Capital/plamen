@@ -36,10 +36,17 @@ Grep the codebase for known parent Sui package signatures:
 - Struct names and function signatures matching known parent interfaces
 - Published package addresses in dependency declarations (known mainnet addresses of parent protocols)
 
+**Git-based detection** (complements code-pattern matching — catches forks that renamed all identifiers).
+Skip if `REPO_SHAPE: squashed_import` in `build_status.md` — single-commit repos have no meaningful git metadata.
+- Parse `.gitmodules` for submodule URLs pointing to known parent repos
+- Check `git remote -v` for origin URLs matching known Sui parent organizations (MystenLabs, cetus-technology, scallop-io, navi-protocol, suilend, deepbook, turbos-finance)
+- If a git-URL match is found but NO code-pattern match exists, flag as `GIT_ONLY_FORK`
+
 **Output**: List of detected parents with confidence level:
 - **HIGH**: 3+ unique patterns matched, OR parent package in Move.toml dependencies
 - **MEDIUM**: 2 patterns matched
 - **LOW**: 1 pattern matched (may be coincidental naming)
+- **GIT_ONLY**: git URL match but no code patterns — fork likely renamed identifiers
 
 ---
 

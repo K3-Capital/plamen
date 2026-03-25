@@ -431,6 +431,8 @@ SCRATCHPAD: {scratchpad}
    - `[dev-addresses]` and `[dev-dependencies]` -- note test-only dependencies
 7. If build fails after 3 attempts, document failure reason and continue
 
+Also run: `git rev-list --count HEAD` — if result is 1, include `REPO_SHAPE: squashed_import`, otherwise `REPO_SHAPE: normal_dev`. This tells FORK_ANCESTRY whether git history analysis is useful.
+
 Write to {SCRATCHPAD}/build_status.md:
 ```markdown
 # Build Status -- Aptos Move

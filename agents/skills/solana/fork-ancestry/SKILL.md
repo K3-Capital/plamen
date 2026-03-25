@@ -38,10 +38,17 @@ Grep the codebase for known parent Solana program signatures:
 - IDL files for instruction/account names matching parent programs
 - Anchor version in `Cargo.toml` (`anchor-lang = "X.Y.Z"`) - known vulnerabilities per version
 
+**Git-based detection** (complements code-pattern matching — catches forks that renamed all identifiers).
+Skip if `REPO_SHAPE: squashed_import` in `build_status.md` — single-commit repos have no meaningful git metadata.
+- Parse `.gitmodules` for submodule URLs pointing to known parent repos
+- Check `git remote -v` for origin URLs matching known Solana parent organizations (solana-labs, project-serum, marinade-finance, drift-labs, jito-foundation, orca-so, raydium-io, metaplex-foundation)
+- If a git-URL match is found but NO code-pattern match exists, flag as `GIT_ONLY_FORK`
+
 **Output**: List of detected parents with confidence level:
 - **HIGH**: 3+ unique patterns matched, OR parent crate in Cargo.toml dependencies
 - **MEDIUM**: 2 patterns matched
 - **LOW**: 1 pattern matched (may be coincidental naming)
+- **GIT_ONLY**: git URL match but no code patterns — fork likely renamed identifiers
 
 ---
 
