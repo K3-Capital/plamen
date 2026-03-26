@@ -29,18 +29,18 @@ Open Claude Code and paste the contents of [`SETUP.md`](SETUP.md). Claude handle
 **Linux / macOS:**
 ```bash
 git clone https://github.com/PlamenTSV/plamen.git ~/.plamen
-export SOLODIT_API_KEY=your_key_here    # free at solodit.cyfrin.io (recommended for RAG quality)
 cd ~/.plamen && python3 plamen.py install
 ```
 
 **Windows (PowerShell):**
 ```powershell
 git clone https://github.com/PlamenTSV/plamen.git $HOME\.plamen
-$env:SOLODIT_API_KEY = "your_key_here"  # free at solodit.cyfrin.io (recommended for RAG quality)
 cd $HOME\.plamen; python plamen.py install
 ```
 
-> Python dependencies are installed automatically on first run. On macOS/Linux use `python3`, on Windows use `python`. Set `SOLODIT_API_KEY` before install — the RAG database builds during setup and Solodit is the largest source (3400+ findings).
+> **Before building the RAG database**: add `SOLODIT_API_KEY` to `~/.claude/settings.json` → `"env"` section (free key from [solodit.cyfrin.io](https://solodit.cyfrin.io)). This is the only place the key is reliably visible to both `plamen rag` and audit agent subprocesses. A terminal `export` is not sufficient — Claude Code spawns non-interactive subshells that don't source `.bashrc`/`.zshrc`.
+>
+> Python dependencies are installed automatically on first run. On macOS/Linux use `python3`, on Windows use `python`.
 
 After install, add to PATH so you can run `plamen` from anywhere:
 

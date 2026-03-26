@@ -1065,7 +1065,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     if db is None:
         return [format_response({
             "error": "Database not available",
-            "reason": "Embedding model failed to load. Try restarting the MCP server.",
+            "reason": "Embedding model failed to load. Run 'plamen rag' to build the database, then restart the MCP server.",
             "fallback": "Use Slither + Three Prompts methodology instead."
         })]
     

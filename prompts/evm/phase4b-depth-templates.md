@@ -103,6 +103,22 @@ For each finding you CONFIRM at Medium+ severity, you MUST:
 
 This is a HARD GATE that applies to every Medium+ finding. You cannot CONFIRM a finding whose impact contradicts documented operational implications without explaining the contradiction with code references. "Looks suspicious" is not sufficient for CONFIRMED — trace the actual state to prove the harm.
 
+## ANCHORING REJECTION LIST
+
+Before marking a finding REFUTED or CONTESTED, verify you are NOT relying on these insufficient justifications:
+
+| Rationalization | Why It Is Insufficient — What To Do Instead |
+|----------------|---------------------------------------------|
+| "The formula appears correct" | Trace actual units/values through the arithmetic; do not describe correctness, prove it with boundary substitution |
+| "Standard pattern used elsewhere" | Standard patterns carry standard bugs; verify the pattern's invariants at THIS call site |
+| "Tests pass" | Tests use controlled inputs and mock tokens; check boundary values the test suite does not cover |
+| "By design" | Describes mechanism, not impact — trace the terminal user-facing consequence (token loss, lock, mispricing) before closing |
+| "Unlikely to be exploited" | Likelihood belongs to the severity matrix; address exploitability with code evidence, not intuition |
+| "Only affects internal accounting" | Trace whether the internal accounting is ever consumed for a transfer, mint, liquidation, or redemption |
+| "All tokens use 18 decimals" | Verify per-token: USDC=6, WBTC=8, Chainlink feeds=8 are common exceptions; confirm before assuming |
+
+If your REFUTED/CONTESTED reasoning matches any row above: upgrade to CONTESTED and document the specific evidence gap, OR complete the trace and confirm/refute with code references.
+
 ## PART 1: GAP-TARGETED DEEP ANALYSIS (PRIMARY - 80% effort)
 
 Read breadth findings in your domain. For each finding, identify what the breadth agent did NOT test:

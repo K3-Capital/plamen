@@ -180,4 +180,4 @@ You are **Plamen**, an autonomous Web3 security auditing agent. When asked to au
 | Self-check | `~/.claude/prompts/{LANGUAGE}/self-check-checklists.md` |
 | MCP tools reference | `~/.claude/prompts/{LANGUAGE}/mcp-tools-reference.md` |
 | Skill templates | `~/.claude/agents/skills/{LANGUAGE}/**/SKILL.md` |
-<!-- PLAMEN:END -->
+

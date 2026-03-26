@@ -174,6 +174,19 @@ Categorize ALL findings by depth domain:
 List ALL REFUTED findings that depth agents MUST re-evaluate:
 | Finding ID | Domain | Breadth Reasoning | Potential Enablers |
 
+## File Coverage Map
+From {SCRATCHPAD}/contract_inventory.md, extract the full list of in-scope source files.
+For each source file, check if its contract name or file path is referenced in ANY analysis_*.md you read.
+
+Write to {SCRATCHPAD}/file_coverage.md:
+
+## File Coverage Map
+| Source File | Referenced in Analysis? | Referenced By |
+|------------|------------------------|--------------|
+
+List any UNCOVERED source files (zero references in any analysis output) under:
+## Uncovered Files — add these to depth_candidates.md as scope gap targets, domain by contract purpose.
+
 ## TASK 4.5: Quick Chain Pre-Scan (Dependency-Aware Severity)
 
 For each finding with Severity=Low AND a non-empty Postcondition Type in the Chain Summary:

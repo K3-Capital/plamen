@@ -168,7 +168,7 @@ Works on all platforms. The setup wizard installs via `suiup` (the official Sui 
 | solodit-scraper | Solodit.xyz data | `pip install -r custom-mcp/solodit-scraper/requirements.txt` | Optional |
 | defihacklabs-rag | DeFiHackLabs data | `pip install -r custom-mcp/defihacklabs-rag/requirements.txt` | Optional |
 
-> **Note**: The unified-vuln-db install pulls ~2GB (includes PyTorch for embeddings). First MCP call per session loads ChromaDB and the embedding model (1-5 minutes cold start). Subsequent calls are instant.
+> **Note**: The unified-vuln-db install pulls ~2GB (includes PyTorch for sentence-transformers). First MCP call per session loads ChromaDB and the all-MiniLM-L6-v2 model (~5s cold start). Subsequent calls are instant.
 
 ### API Keys
 

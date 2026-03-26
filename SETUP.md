@@ -71,17 +71,21 @@ git submodule update --init --recursive
 
 The installer builds the RAG vulnerability database during setup. The Solodit source (3400+ audit findings — the largest and most important source) requires an API key. **Set this before running the installer**, otherwise Solodit indexing will fail silently and you'll get a weaker RAG database.
 
-Set the Solodit API key as an environment variable (free key from https://solodit.cyfrin.io):
+**Add `SOLODIT_API_KEY` to `~/.claude/settings.json`** (the recommended approach — makes the key available to both `plamen rag` and all audit agents):
 
-**Linux / macOS:**
-```bash
-export SOLODIT_API_KEY=your_key_here
+```json
+{
+  "env": {
+    "MCP_TIMEOUT": "30000",
+    "MCP_TOOL_TIMEOUT": "300000",
+    "SOLODIT_API_KEY": "your_key_here"
+  }
+}
 ```
 
-**Windows (PowerShell):**
-```powershell
-$env:SOLODIT_API_KEY = "your_key_here"
-```
+Get a free key at https://solodit.cyfrin.io.
+
+> **Why settings.json and not `export`?** Claude Code spawns audit agent subprocesses in non-interactive shells that don't source `.bashrc`/`.zshrc`. Only env vars in `settings.json`'s `env` section are reliably available to all subprocesses. A terminal `export` only works for the one `plamen rag` run you do in that terminal — audit agents won't see it.
 
 > Other API keys (Etherscan, Tavily, Helius, RPC URL) are configured AFTER install in `~/.claude/mcp.json`. Only Solodit is needed before install because the RAG indexer runs during setup.
 
@@ -120,8 +124,9 @@ Edit `~/.claude/mcp.json`:
 
 For the Python command path, run `which python3` (macOS/Linux) or `where python` (Windows) and use that path.
 
-> If you skipped Step 2 or want to rebuild the RAG database after adding the Solodit key, run:
-> `export SOLODIT_API_KEY=your_key_here && python3 -m unified_vuln.indexer index -s solodit --max-pages 10` (use `python` on Windows). This works from any directory after install.
+> If you skipped Step 2 or want to rebuild the RAG database after adding the Solodit key:
+> 1. Add `SOLODIT_API_KEY` to `~/.claude/settings.json` `"env"` section (see Step 2 above)
+> 2. Run `plamen rag` — this rebuilds all sources using the key from settings.json
 
 ## Step 5: Verify installation
 

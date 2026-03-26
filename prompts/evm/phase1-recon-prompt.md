@@ -288,6 +288,7 @@ Grep for these patterns (exclude lib/, test/, mocks/):
 | `reinitializer\|V2\|V3\|_deprecated\|migrat\|upgrade\|legacy` | MIGRATION |
 | `shares\|allocation\|distribute\|pro.rata\|proportional\|vest` | SHARE_ALLOCATION |
 | `rate\|rebase\|supply\|mint.*burn\|emission\|inflation\|peg\|price.*cap\|price.*floor` | MONETARY_PARAMETER |
+| `mulDiv\|mulWad\|divWad\|rayMul\|rayDiv\|FullMath\.mulDiv` (AND codebase also contains `1e6\|1e8\|decimals()`) | MIXED_DECIMALS |
 | `IERC6909\|ERC6909\|IERC1155\|ERC1155\|onERC1155Received` | MULTI_TOKEN_STANDARD |
 | `ecrecover\|ECDSA.recover\|SignatureChecker\|isValidSignature\|EIP712\|domainSeparator\|_domainSeparatorV4\|permit(` | HAS_SIGNATURES |
 | `_safeMint\|safeTransfer\|onERC721Received\|onERC1155Received\|tokensReceived\|onTransferReceived\|onFlashLoan\|executeOperation\|FlashCallback\|beforeSwap\|afterSwap` | OUTCOME_CALLBACK |
@@ -404,6 +405,7 @@ After listing all recommended templates, output this binding manifest:
 - ORACLE flag detected → ORACLE_ANALYSIS **REQUIRED**
 - MONETARY_PARAMETER flag detected → ECONOMIC_DESIGN_AUDIT **REQUIRED**
 - External interactions detected in attack_surface.md → EXTERNAL_PRECONDITION_AUDIT **REQUIRED**
+- MIXED_DECIMALS flag detected → DIMENSIONAL_ANALYSIS **injectable skill** RECOMMENDED (inject into depth-token-flow + depth-state-trace)
 
 ### Niche Agent Binding Rules
 - MISSING_EVENT flag detected (setter_list.md has MISSING EVENT entries OR emit_list.md shows state-changing functions without events) → EVENT_COMPLETENESS **niche agent** REQUIRED
@@ -421,6 +423,12 @@ After listing all recommended templates, output this binding manifest:
 | SEMANTIC_CONSISTENCY_AUDIT | HAS_MULTI_CONTRACT flag (contract_inventory.md + constraint_variables.md) | {YES/NO} | {if YES: N shared parameters/formulas across M contracts} |
 | MULTI_STEP_OPERATION_SAFETY | MULTI_STEP_OPS flag (detected_patterns.md) | {YES/NO} | {if YES: approve/safeApprove/increaseAllowance/permit or depositFor/stakeFor/delegateTo/OnBehalf patterns found} |
 | CALLBACK_RECEIVER_SAFETY | OUTCOME_CALLBACK flag (detected_patterns.md) | {YES/NO} | {if YES: callback handler patterns found - onERC721Received/tokensReceived/etc.} |
+
+### Pattern-Triggered Injectable Skills
+
+| Injectable Skill | Trigger | Recommended? | Reason |
+|-----------------|---------|-------------|--------|
+| DIMENSIONAL_ANALYSIS | MIXED_DECIMALS flag (mulDiv/mulWad + mixed-decimal constants in scope) | {YES/NO} | {if YES: inject into depth-token-flow + depth-state-trace} |
 
 ### Manifest Summary
 - **Total Required Breadth Agents**: {count of YES in skill templates}

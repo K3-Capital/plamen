@@ -120,6 +120,7 @@
 
 | Skill | Protocol Type Trigger | Inject Into |
 |-------|----------------------|-------------|
+| DIMENSIONAL_ANALYSIS | `MIXED_DECIMALS` flag (mulDiv/mulWad/rayMul + 1e6/1e8/decimals() in scope) | depth-token-flow, depth-state-trace |
 | VAULT_ACCOUNTING | `vault` | Core state or economic design agent (M4) |
 | ACCOUNT_ABSTRACTION_SECURITY | `account_abstraction` (ERC-4337, EntryPoint, UserOperation, Paymaster) | Breadth agents, depth-external |
 | NFT_PROTOCOL_SECURITY | `nft` (ERC721/ERC1155 with marketplace, staking, or collateral logic) | Breadth agents, depth-token-flow, depth-edge-case |
