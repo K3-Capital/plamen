@@ -123,29 +123,33 @@ Edit `~/.claude/mcp.json` with your API keys. See [MCP Servers](mcp-servers.md) 
 
 ### 4. Build the RAG database
 
-```bash
-export SOLODIT_API_KEY=your_key_here   # free at solodit.cyfrin.io
+First, add `SOLODIT_API_KEY` to `~/.claude/settings.json` → `"env"` section:
 
-cd custom-mcp/unified-vuln-db
-python3 -m unified_vuln.indexer index -s solodit --max-pages 10
-python3 -m unified_vuln.indexer index -s defihacklabs
-python3 -m unified_vuln.indexer index -s immunefi
-python3 -m unified_vuln.indexer stats   # verify
-cd ../..
-# Note: on Windows use 'python' instead of 'python3'
+```json
+{
+  "env": {
+    "MCP_TIMEOUT": "30000",
+    "MCP_TOOL_TIMEOUT": "300000",
+    "SOLODIT_API_KEY": "your_key_here"
+  }
+}
 ```
 
-<details>
-<summary><strong>Full build (~30 min, better RAG quality)</strong></summary>
+> **Why settings.json and not `export`?** Claude Code runs subprocesses in non-interactive shells that don't source `.bashrc`/`.zshrc`. Only `settings.json` `"env"` vars are reliably propagated to both `plamen rag` and audit agent Bash subprocesses.
+
+Then run:
 
 ```bash
-python3 -m unified_vuln.indexer index -s solodit --max-pages 100
-git clone https://github.com/SunWeb3Sec/DeFiHackLabs.git data/DeFiHackLabs
-python3 -m unified_vuln.indexer index -s defihacklabs
-python3 -m unified_vuln.indexer index -s immunefi
+plamen rag          # macOS / Linux
+plamen.bat rag      # Windows
 ```
 
-</details>
+Or directly:
+
+```bash
+python3 plamen.py rag   # macOS / Linux
+python plamen.py rag    # Windows
+```
 
 ### 5. Verify
 

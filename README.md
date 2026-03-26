@@ -22,25 +22,25 @@ Orchestrates 15-95 AI agents across 8 phases to produce audit reports with verif
 
 ### Option A: Let Claude set it up (recommended)
 
-Open Claude Code and paste the contents of [`SETUP.md`](SETUP.md). Claude handles cloning, symlink installation, and dependency setup automatically. RAG database building is a separate step (`plamen rag`) — see below.
+Open Claude Code and paste the contents of [`SETUP.md`](SETUP.md). Claude handles cloning, symlink installation, dependency setup, and RAG database building automatically.
 
 ### Option B: Terminal
 
 **Linux / macOS:**
 ```bash
 git clone https://github.com/PlamenTSV/plamen.git ~/.plamen
-export SOLODIT_API_KEY=your_key_here    # free at solodit.cyfrin.io (recommended for RAG quality)
 cd ~/.plamen && python3 plamen.py install
 ```
 
 **Windows (PowerShell):**
 ```powershell
 git clone https://github.com/PlamenTSV/plamen.git $HOME\.plamen
-$env:SOLODIT_API_KEY = "your_key_here"  # free at solodit.cyfrin.io (recommended for RAG quality)
 cd $HOME\.plamen; python plamen.py install
 ```
 
-> Python dependencies are installed automatically on first run. On macOS/Linux use `python3`, on Windows use `python`. The RAG database is **not** built during install — run `plamen rag` separately after install (see below).
+> **Before building the RAG database**: add `SOLODIT_API_KEY` to `~/.claude/settings.json` → `"env"` section (free key from [solodit.cyfrin.io](https://solodit.cyfrin.io)). This is the only place the key is reliably visible to both `plamen rag` and audit agent subprocesses. A terminal `export` is not sufficient — Claude Code spawns non-interactive subshells that don't source `.bashrc`/`.zshrc`.
+>
+> Python dependencies are installed automatically on first run. On macOS/Linux use `python3`, on Windows use `python`.
 
 After install, add to PATH so you can run `plamen` from anywhere:
 
@@ -62,8 +62,8 @@ echo 'export PATH="$HOME/.plamen:$PATH"' >> ~/.zshrc && source ~/.zshrc
 Then use `plamen` from anywhere:
 ```bash
 plamen                              # interactive wizard
-plamen setup                        # install chain toolchains
-plamen rag                          # build/rebuild RAG database (~10-20 min)
+plamen setup                        # install tools + build RAG
+plamen rag                          # rebuild RAG database only
 plamen uninstall                    # remove Plamen from ~/.claude
 ```
 
@@ -74,7 +74,7 @@ The installer:
 - Merges Plamen's permissions into your existing `settings.json` (additive only — won't remove your entries)
 - Merges MCP server definitions into `mcp.json` (won't overwrite your existing servers)
 - Injects Plamen instructions into `CLAUDE.md` between `<!-- PLAMEN:START/END -->` markers (preserves your content)
-- Installs core Python dependencies (RAG deps installed separately via `plamen rag`)
+- Installs Python dependencies and builds the RAG database
 
 Your existing Claude Code configuration is preserved.
 
@@ -112,13 +112,25 @@ The Plamen repo stays at `~/.plamen`. The installer creates symlinks (shortcuts)
 ```bash
 cd ~/.plamen
 
-# 1. Core Python deps (lightweight — ~30s)
+# 1. Python deps (~2GB download — PyTorch for embeddings)
 pip install -r requirements.txt
-pip install -r custom-mcp/farofino-mcp/requirements.txt
+pip install -r custom-mcp/unified-vuln-db/requirements.txt
+pip install -r custom-mcp/solodit-scraper/requirements.txt
+pip install -r custom-mcp/defihacklabs-rag/requirements.txt
 pip install -e custom-mcp/solana-fender
+pip install -r custom-mcp/farofino-mcp/requirements.txt
 pip install -e custom-mcp/slither-mcp              # EVM only (needs Python 3.11+)
 
-# 2. Chain tools (install what you need)
+# 2. Build RAG database (~5 min)
+export SOLODIT_API_KEY=your_key_here                # free at solodit.cyfrin.io
+cd custom-mcp/unified-vuln-db
+python3 -m unified_vuln.indexer index -s solodit --max-pages 10
+python3 -m unified_vuln.indexer index -s defihacklabs
+python3 -m unified_vuln.indexer index -s immunefi
+cd ../..
+# Note: on Windows use 'python' instead of 'python3'
+
+# 3. Chain tools (install what you need)
 curl -L https://foundry.paradigm.xyz | bash && foundryup          # EVM
 pip install slither-analyzer                                       # EVM static analysis
 # See docs/setup.md for Solana, Aptos, Sui, Medusa, Trident
@@ -137,8 +149,6 @@ plamen                    # terminal wrapper with interactive wizard
 ```
 
 Or inside Claude Code: `/plamen`
-
-> **New to Plamen?** See [docs/getting-started.md](docs/getting-started.md) — explains what's required vs optional, which chain tools to install, and how to run your first audit.
 
 ---
 
@@ -162,8 +172,7 @@ See [docs/audit-modes.md](docs/audit-modes.md) for the full comparison.
 plamen                                              # interactive wizard
 plamen core /path/to/project                        # skip wizard
 plamen thorough /path/to/project --proven-only      # strict evidence mode
-plamen setup                                        # install chain toolchains
-plamen rag                                          # build/rebuild RAG database (~10-20 min)
+plamen setup                                        # install tools only
 ```
 
 **Inside Claude Code**:
@@ -194,7 +203,6 @@ Language detection is automatic based on config files.
 
 | Topic | Link |
 |-------|------|
-| **Getting started** | **[docs/getting-started.md](docs/getting-started.md)** |
 | Full setup guide | [docs/setup.md](docs/setup.md) |
 | Platform dependencies | [docs/dependencies.md](docs/dependencies.md) |
 | Audit mode comparison | [docs/audit-modes.md](docs/audit-modes.md) |
