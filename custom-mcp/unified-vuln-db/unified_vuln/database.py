@@ -1,8 +1,7 @@
 """
 Unified Vulnerability Database v2.0 - Graph-Enhanced Engine
 
-Key upgrades:
-- Code-aware embeddings (Nomic/Voyage with Matryoshka support)
+- all-MiniLM-L6-v2 embeddings (384-dim, ~90MB, fast CPU inference)
 - Graph-lite layer for relationship traversal
 - Structured JSON output for Claude Code
 """
@@ -11,8 +10,12 @@ import os
 import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union, Callable
-import chromadb
-from chromadb.config import Settings
+try:
+    import chromadb
+    from chromadb.config import Settings
+except ImportError:
+    chromadb = None  # RAG deps not installed — server starts but DB unavailable
+    Settings = None
 from rich.console import Console
 
 from .schema import Vulnerability, Source
@@ -41,138 +44,55 @@ COLLECTION_NAME = "vulnerabilities_v2"
 
 class CodeAwareEmbeddingFunction:
     """
-    Code-aware embedding function with Matryoshka dimension support.
-    
-    Priority:
-    1. Voyage Code 2 (best for code, requires API key)
-    2. Nomic Embed Text v1.5 (good local alternative with Matryoshka)
-    3. CodeBERT (fallback)
-    4. all-MiniLM-L6-v2 (last resort)
+    Embedding function using all-MiniLM-L6-v2 (384-dim, ~90MB, fast CPU inference).
+    This is the only supported model — no Nomic, no Voyage, no alternatives.
     """
-    
-    def __init__(
-        self, 
-        model_name: str = "auto",
-        dimensions: int = 768,  # Matryoshka: can be 64, 128, 256, 512, 768
-        voyage_api_key: Optional[str] = None,
-    ):
-        self.model_name = model_name
-        self.dimensions = dimensions
-        self.voyage_api_key = voyage_api_key or os.environ.get("VOYAGE_API_KEY")
+
+    def __init__(self):
         self.model = None
         self.model_type = None
-        self._model_name_str = "code-aware-embeddings"
-        
+        self._model_name_str = "all-MiniLM-L6-v2"
+        self.dimensions = 384
         self._initialize()
-    
+
     def name(self) -> str:
         """Return embedding function name (required by ChromaDB)."""
         return self._model_name_str
-    
+
     def _initialize(self):
-        """Initialize the best available model."""
-        import os
-        
-        # Check for fast mode (skip heavy models, use MiniLM)
-        fast_mode = os.environ.get("VULN_DB_FAST_MODE", "").lower() in ("1", "true", "yes")
-        if fast_mode:
-            console.print("[yellow]Fast mode enabled - using lightweight model[/yellow]")
-            self.model_name = "minilm"
-        
-        # Try Voyage Code 2 (best for code)
-        if self.voyage_api_key and self.model_name in ["auto", "voyage"]:
-            try:
-                import voyageai
-                self.model = voyageai.Client(api_key=self.voyage_api_key)
-                self.model_type = "voyage"
-                self._model_name_str = "voyage-code-2"
-                console.print("[green]Using Voyage Code 2 embeddings (API)[/green]")
-                return
-            except ImportError:
-                console.print("[yellow]voyageai not installed, trying alternatives...[/yellow]")
-        
-        # Try MiniLM first if not auto (fastest loading, ~90MB)
-        if self.model_name == "minilm":
-            try:
-                from sentence_transformers import SentenceTransformer
-                self.model = SentenceTransformer("all-MiniLM-L6-v2")
-                self.model_type = "minilm"
-                self._model_name_str = "all-MiniLM-L6-v2"
-                self.dimensions = 384  # MiniLM output dimension
-                console.print("[green]Using all-MiniLM-L6-v2 (fast)[/green]")
-                return
-            except Exception as e:
-                console.print(f"[yellow]MiniLM failed: {e}[/yellow]")
-        
-        # Try Nomic Embed (local, Matryoshka support, ~500MB)
-        if self.model_name in ["auto", "nomic"]:
-            try:
-                from sentence_transformers import SentenceTransformer
-                self.model = SentenceTransformer(
-                    "nomic-ai/nomic-embed-text-v1.5",
-                    trust_remote_code=True
-                )
-                self.model_type = "nomic"
-                self._model_name_str = "nomic-embed-v1.5"
-                console.print(f"[green]Using Nomic Embed v1.5 (local, dim={self.dimensions})[/green]")
-                return
-            except Exception as e:
-                console.print(f"[yellow]Nomic failed: {e}, trying MiniLM...[/yellow]")
-        
-        # Fallback to MiniLM (smallest, fastest)
+        """Load all-MiniLM-L6-v2. Raises ImportError if sentence-transformers is missing."""
         try:
             from sentence_transformers import SentenceTransformer
             self.model = SentenceTransformer("all-MiniLM-L6-v2")
             self.model_type = "minilm"
-            self._model_name_str = "all-MiniLM-L6-v2"
-            self.dimensions = 384
-            console.print("[yellow]Using all-MiniLM-L6-v2 (fallback)[/yellow]")
         except ImportError:
-            console.print("[red]No embedding model available![/red]")
+            console.print(
+                "[red]sentence-transformers not installed. "
+                "Run 'plamen rag' to set up.[/red]"
+            )
             self.model = None
             self.model_type = None
-            self._model_name_str = "none"
     
     def __call__(self, input: List[str]) -> List[List[float]]:
         """Generate embeddings for input texts (ChromaDB interface)."""
         return self._embed(input)
-    
+
     def embed_documents(self, input: List[str]) -> List[List[float]]:
         """Embed documents (ChromaDB interface)."""
         return self._embed(input)
-    
+
     def embed_query(self, input: List[str]) -> List[List[float]]:
         """Embed query (ChromaDB interface)."""
         return self._embed(input)
-    
+
     def _embed(self, input: List[str]) -> List[List[float]]:
-        """Internal embedding function."""
+        """Embed with MiniLM. Shows progress bar for batches >= 50 (indexing)."""
         if self.model is None:
             return [[0.0] * self.dimensions for _ in input]
-        
-        if self.model_type == "voyage":
-            # Voyage API
-            result = self.model.embed(
-                input, 
-                model="voyage-code-2",
-                input_type="document"
-            )
-            return result.embeddings
-        
-        elif self.model_type == "nomic":
-            # Nomic with Matryoshka dimension truncation
-            embeddings = self.model.encode(
-                input, 
-                show_progress_bar=False,
-                convert_to_numpy=True
-            )
-            # Truncate to desired dimensions (Matryoshka)
-            return embeddings[:, :self.dimensions].tolist()
-        
-        else:
-            # Standard sentence-transformers
-            embeddings = self.model.encode(input, show_progress_bar=False)
-            return embeddings.tolist()
+        # Show progress for large batches; stay silent at query time.
+        show_progress = len(input) >= 50
+        embeddings = self.model.encode(input, show_progress_bar=show_progress)
+        return embeddings.tolist()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -393,33 +313,27 @@ class GraphLiteLayer:
 class VulnerabilityDB:
     """
     Unified vulnerability database with graph-enhanced search.
-    
-    Features:
-    - Code-aware embeddings (Nomic/Voyage)
-    - Matryoshka dimension support
-    - Graph-lite relationship traversal
-    - Structured JSON outputs for Claude Code
+
+    Uses all-MiniLM-L6-v2 (384-dim) for all embeddings.
+    Graph-lite layer for relationship traversal.
+    Structured JSON outputs for Claude Code.
     """
-    
-    def __init__(
-        self,
-        persist_dir: Optional[Path] = None,
-        embedding_model: str = "auto",
-        embedding_dimensions: int = 768,
-        voyage_api_key: Optional[str] = None,
-    ):
+
+    def __init__(self, persist_dir: Optional[Path] = None):
+        if chromadb is None:
+            raise ImportError(
+                "RAG dependencies not installed (chromadb, sentence-transformers). "
+                "Run 'plamen rag' to install them and build the database."
+            )
+
         self.persist_dir = persist_dir or CHROMA_DIR
         self.persist_dir.mkdir(parents=True, exist_ok=True)
 
         # Initialize embedding function FIRST (needed for dimension check)
-        self.embedding_fn = CodeAwareEmbeddingFunction(
-            model_name=embedding_model,
-            dimensions=embedding_dimensions,
-            voyage_api_key=voyage_api_key,
-        )
+        self.embedding_fn = CodeAwareEmbeddingFunction()
 
         # Check for dimension mismatch with existing DB before opening.
-        # A stale DB from a crashed build with a different model (e.g., Nomic 768-dim
+        # A stale DB from a crashed build with a different model (e.g., an old 768-dim
         # vs MiniLM 384-dim) causes ChromaDB to hang on get_or_create_collection.
         self._wipe_if_dimension_mismatch()
 
@@ -538,30 +452,35 @@ class VulnerabilityDB:
             console.print(f"[red]Error adding {vuln.id}: {e}[/red]")
             return False
     
-    def add_vulnerabilities(self, vulns: List[Vulnerability], batch_size: int = 100) -> int:
-        """Add multiple vulnerabilities in batches with progress."""
-        from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
-        
+    def add_vulnerabilities(self, vulns: List[Vulnerability], batch_size: int = 50) -> int:
+        """Add multiple vulnerabilities in batches with progress.
+
+        Default batch_size=50 (not 100) gives more frequent progress updates
+        during embedding — users see ~14 updates for 700 docs instead of 7.
+        """
+        from rich.progress import (Progress, SpinnerColumn, BarColumn,
+                                   TextColumn, TimeElapsedColumn)
+
         added = 0
-        total_batches = (len(vulns) + batch_size - 1) // batch_size
-        
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
             TextColumn("({task.completed}/{task.total})"),
+            TimeElapsedColumn(),
             console=console,
         ) as progress:
             task = progress.add_task("[cyan]Embedding & indexing...", total=len(vulns))
-            
+
             for i in range(0, len(vulns), batch_size):
                 batch = vulns[i:i + batch_size]
-                
+
                 documents = [v.to_document() for v in batch]
                 metadatas = [v.to_metadata() for v in batch]
                 ids = [v.id for v in batch]
-                
+
                 try:
                     self.collection.add(
                         documents=documents,
@@ -574,9 +493,9 @@ class VulnerabilityDB:
                     for v in batch:
                         if self.add_vulnerability(v):
                             added += 1
-                
+
                 progress.update(task, advance=len(batch))
-        
+
         return added
     
     def update_vulnerability(self, vuln: Vulnerability) -> bool:
@@ -897,15 +816,9 @@ class VulnerabilityDB:
 _db_instance: Optional[VulnerabilityDB] = None
 
 
-def get_db(
-    embedding_model: str = "auto",
-    embedding_dimensions: int = 768,
-) -> VulnerabilityDB:
+def get_db() -> VulnerabilityDB:
     """Get the database singleton."""
     global _db_instance
     if _db_instance is None:
-        _db_instance = VulnerabilityDB(
-            embedding_model=embedding_model,
-            embedding_dimensions=embedding_dimensions,
-        )
+        _db_instance = VulnerabilityDB()
     return _db_instance

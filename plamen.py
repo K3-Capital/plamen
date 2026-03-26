@@ -150,12 +150,16 @@ MODES = {
 # ── Dependency check ─────────────────────────────────────────
 
 def _python_bin() -> str:
-    """Return the name of the Python binary available on this system."""
-    if shutil.which("python"):
-        return "python"
-    if shutil.which("python3"):
-        return "python3"
-    return "python"  # fallback — will fail with a clear error
+    """Return the Python interpreter command for use in shell strings.
+
+    Uses sys.executable (the interpreter running plamen.py itself) so subprocess
+    commands always use the same venv or system Python that launched plamen.
+    Path is quoted if it contains spaces.
+    """
+    exe = sys.executable
+    if " " in exe:
+        return f'"{exe}"'
+    return exe
 
 
 def _python_extra_paths() -> list:
@@ -423,7 +427,7 @@ def check_dependencies() -> bool:
     w(f"  {bx}├{'─' * W}┤{_RST}\n")
     rag_count = _probe_rag_db()
     if rag_count >= _RAG_MIN_ENTRIES:
-        rag_status = f"{_C_GREEN}{rag_count:,} entries{_RST}  {_C_DARK_GRAY}(cold-start ~30s on first query){_RST}"
+        rag_status = f"{_C_GREEN}{rag_count:,} entries{_RST}  {_C_DARK_GRAY}(cold-start ~5s on first query){_RST}"
     elif rag_count > 0:
         rag_status = f"{_C_ORANGE}{rag_count:,} (incomplete){_RST}"
     elif rag_count == 0:
@@ -968,35 +972,6 @@ def _is_fanless_mac() -> bool:
     return False
 
 
-def _should_use_fast_rag() -> bool:
-    """Detect if machine should use lightweight embedding model for RAG build.
-
-    Nomic Embed v1.5 (~500MB) + PyTorch runs sustained CPU inference during
-    indexing. On fanless machines (all MacBook Airs) this causes thermal
-    throttling and potential crashes. On low-RAM machines (<16GB) it causes
-    heavy swapping. MiniLM (~90MB) is ~5x faster and perfectly adequate.
-
-    Override: set VULN_DB_FAST_MODE=0 to force Nomic, =1 to force MiniLM.
-    """
-    val = os.environ.get("VULN_DB_FAST_MODE", "").lower()
-    if val in ("0", "false", "no"):
-        return False
-    if val in ("1", "true", "yes"):
-        return True
-
-    # Fanless Macs throttle regardless of RAM — sustained PyTorch load
-    # on M1/M2/M3 Air causes 100%+ CPU with no thermal headroom
-    if _is_fanless_mac():
-        return True
-
-    # Low RAM: Nomic + PyTorch + ChromaDB needs ~4-6GB working memory
-    ram_gb = _get_total_ram_gb()
-    if 0 < ram_gb < 16:
-        return True
-
-    return False
-
-
 def _build_rag_db(w):
     """Run the RAG indexer pipeline. Returns True on success."""
     vuln_db_dir = os.path.join(PLAMEN_HOME, "custom-mcp", "unified-vuln-db")
@@ -1006,17 +981,7 @@ def _build_rag_db(w):
 
     py = _python_bin()
 
-    # Auto-detect thermal/memory constraints and switch to lightweight model
-    if _should_use_fast_rag():
-        os.environ["VULN_DB_FAST_MODE"] = "1"
-        ram = _get_total_ram_gb()
-        reason = "fanless Mac detected" if _is_fanless_mac() else f"{ram:.0f}GB RAM"
-        w(f"  {_C_BLUE}Using lightweight embeddings ({reason}){_RST}\n")
-        w(f"  {_C_DARK_GRAY}Override: VULN_DB_FAST_MODE=0 to use full model{_RST}\n\n")
-
     # Wipe existing ChromaDB — rebuild means fresh start.
-    # A stale DB from a previous crashed/partial build with a different embedding model
-    # (e.g., Nomic 768-dim vs MiniLM 384-dim) causes ChromaDB to hang on collection open.
     # NOTE: database.py resolves DATA_DIR via Path(__file__).parents[3] / "unified-vuln-db" / "data",
     # which puts chroma_db at PLAMEN_HOME/unified-vuln-db/data/chroma_db — NOT under custom-mcp/.
     chroma_dir = os.path.join(PLAMEN_HOME, "unified-vuln-db", "data", "chroma_db")
@@ -1025,25 +990,26 @@ def _build_rag_db(w):
         _shutil.rmtree(chroma_dir, ignore_errors=True)
         w(f"  {_C_GRAY}Cleared stale RAG database for clean rebuild{_RST}\n")
 
-    # Check for Solodit API key — needed for the largest data source
+    # Check for Solodit API key — needed for the largest data source.
+    # The key must be available in the environment when this process runs.
+    # Recommended: add SOLODIT_API_KEY to ~/.claude/settings.json "env" section
+    # so it is always available to plamen and audit agents alike.
     if not os.environ.get("SOLODIT_API_KEY", "").strip():
         w(f"  {_C_ORANGE}Note: SOLODIT_API_KEY not set — Solodit indexing will be skipped{_RST}\n")
         w(f"  {_C_GRAY}Get a free key at https://solodit.cyfrin.io{_RST}\n")
-        w(f"  {_C_GRAY}Set it: export SOLODIT_API_KEY=your_key_here{_RST}\n\n")
+        w(f"  {_C_GRAY}Add to ~/.claude/settings.json → \"env\": {{\"SOLODIT_API_KEY\": \"your_key\"}}{_RST}\n\n")
 
-    # Per-source timeouts and page limits.
-    # Fanless Macs / low-RAM machines need more time (thermal throttling slows embedding)
-    # and fewer Solodit pages (29 tags × pages × 3.5s delay easily blows 600s on slow networks).
-    fast = _should_use_fast_rag()
-    solodit_timeout  = 1800 if fast else 1200  # 30 min / 20 min
-    indexing_timeout =  900 if fast else  600  # 15 min / 10 min
-    max_pages        =    5 if fast else   10
+    # Fixed timeouts. Solodit is network-bound (29 tags × rate-limit delay);
+    # DeFiHackLabs and Immunefi are fast with MiniLM (~2-3 min each).
+    solodit_timeout  = 1200  # 20 min — generous for slow networks + rate limiting
+    indexing_timeout =  600  # 10 min — more than enough for MiniLM on any hardware
+    max_pages        =    5  # 29 tags × 5 pages × 3.5s ≈ 8 min API time
 
     steps = [
         # (label, est, cmd, retry_cmd, timeout)
-        # Solodit: no retry — a hanging API call won't improve on the same request
+        # Solodit: no retry — a hanging API call won't improve on retry
         ("Solodit — live API",
-         f"~{'10' if fast else '5'} min",
+         "~10 min",
          f'cd "{vuln_db_dir}" && {py} -m unified_vuln.indexer index -s solodit --max-pages {max_pages}',
          None,
          solodit_timeout),
@@ -1137,8 +1103,10 @@ def _setup_python_deps(w):
       f"  {_C_DARK_GRAY}~2-5 min (PyTorch is ~2GB){_RST}\n\n")
     sys.stdout.flush()
 
-    # Build pip flags that work on PEP 668 systems (macOS Homebrew, Ubuntu 23.04+)
-    pip_flags = " ".join(a for a in _pip_install_args()[3:])  # skip "python -m pip install"
+    # Build pip flags that work on PEP 668 systems (macOS Homebrew, Ubuntu 23.04+).
+    # _pip_install_args() = [sys.executable, "-m", "pip", "install", <flags...>]
+    # Skip indices 0-3 (the base command) to get only the flags: --user, --break-system-packages
+    pip_flags = " ".join(a for a in _pip_install_args()[4:])  # skip "python -m pip install"
     pip_base = f'{py} -m pip install {pip_flags}'.rstrip()
 
     all_ok = True
@@ -1385,10 +1353,19 @@ def _merge_mcp_json(w):
             existing = _json.load(f)
         existing.setdefault("mcpServers", {})
 
-    added, skipped = [], []
+    added, skipped, patched_env = [], [], []
     for name, config in plamen.get("mcpServers", {}).items():
         if name in existing["mcpServers"]:
             skipped.append(name)
+            # Backfill missing env vars into existing servers (e.g., new keys added
+            # to mcp.json.example after initial install — propagate to existing config)
+            template_env = config.get("env", {})
+            if template_env:
+                existing_env = existing["mcpServers"][name].setdefault("env", {})
+                for k, v in template_env.items():
+                    if k not in existing_env and not v.startswith("YOUR_"):
+                        existing_env[k] = v
+                        patched_env.append(f"{name}.{k}")
         else:
             existing["mcpServers"][name] = config
             added.append(name)
@@ -1399,9 +1376,11 @@ def _merge_mcp_json(w):
 
     if added:
         w(f"  {_C_GREEN}mcp.json: added {', '.join(added)}{_RST}\n")
+    if patched_env:
+        w(f"  {_C_GREEN}mcp.json: backfilled env vars: {', '.join(patched_env)}{_RST}\n")
     if skipped:
         w(f"  {_C_GRAY}mcp.json: kept existing {', '.join(skipped)}{_RST}\n")
-    if not added and not skipped:
+    if not added and not skipped and not patched_env:
         w(f"  {_C_GREEN}mcp.json: up to date{_RST}\n")
 
     # Remind about API keys for newly added servers
