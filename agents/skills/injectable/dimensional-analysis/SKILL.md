@@ -10,6 +10,7 @@ description: "Protocol Type Trigger MIXED_DECIMALS (mulDiv/mulWad/rayMul + mixed
 > **Language**: EVM only (Solidity fixed-point arithmetic)
 > **Finding prefix**: `[DA-N]`
 > **Added in**: v1.1.0
+> **Attribution**: The concept of dimensional analysis for smart contract arithmetic is inspired by Trail of Bits' dimensional-analysis plugin (github.com/trailofbits/skills, CC BY-SA 4.0). This skill is an independent security auditing methodology — it finds bugs, not annotates code — and uses Plamen's established finding/trace format rather than ToB's code-annotation workflow.
 
 ## Orchestrator Decomposition Guide
 - Phase 1 + 2 (Vocabulary + Annotation): depth-token-flow (token scale tracking at entry/exit)
