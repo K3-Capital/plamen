@@ -1080,9 +1080,11 @@ def _setup_python_deps(w):
     py = _python_bin()
     req_files = [
         ("Plamen wrapper", "requirements.txt"),
+        # unified-vuln-db handles all RAG indexing (solodit, defihacklabs, immunefi)
+        # via its own HTTP fetching code — no separate solodit-scraper or
+        # defihacklabs-rag packages needed. Those legacy packages are not MCP servers
+        # and not called by the current pipeline.
         ("unified-vuln-db", "custom-mcp/unified-vuln-db/requirements.txt"),
-        ("solodit-scraper", "custom-mcp/solodit-scraper/requirements.txt"),
-        ("defihacklabs-rag", "custom-mcp/defihacklabs-rag/requirements.txt"),
         ("farofino-mcp", "custom-mcp/farofino-mcp/requirements.txt"),
     ]
     editable_pkgs = [
@@ -1312,8 +1314,14 @@ def _merge_settings_json(w):
 
     existing = {}
     if os.path.isfile(target):
-        with open(target) as f:
-            existing = _json.load(f)
+        try:
+            with open(target) as f:
+                existing = _json.load(f)
+        except (_json.JSONDecodeError, ValueError) as e:
+            w(f"  {_C_RED}settings.json is not valid JSON: {e}{_RST}\n")
+            w(f"  {_C_GRAY}  Fix the file manually, then re-run install.{_RST}\n")
+            w(f"  {_C_GRAY}  Common cause: trailing commas or missing quotes.{_RST}\n")
+            return
 
     # Merge env vars (additive — don't overwrite existing keys)
     plamen_env = plamen.get("env", {})
@@ -1357,15 +1365,27 @@ def _merge_mcp_json(w):
     with open(example) as f:
         plamen = _json.load(f)
 
-    # Resolve relative cwd paths to absolute (pointing to real repo location)
+    # Resolve relative cwd paths to absolute (pointing to real repo location).
+    # Also replace generic "python"/"python3" with sys.executable so the MCP servers
+    # use the exact interpreter that ran this install — and therefore have the right
+    # site-packages. This prevents the "spawn python ENOENT" error on macOS/Linux where
+    # only python3 exists, and ensures venv-installed deps are visible to the servers.
     for _name, config in plamen.get("mcpServers", {}).items():
         if "cwd" in config and config["cwd"].startswith("./"):
             config["cwd"] = os.path.join(PLAMEN_HOME, config["cwd"][2:])
+        if config.get("command") in ("python", "python3"):
+            config["command"] = sys.executable
 
     existing = {"mcpServers": {}}
     if os.path.isfile(target):
-        with open(target) as f:
-            existing = _json.load(f)
+        try:
+            with open(target) as f:
+                existing = _json.load(f)
+        except (_json.JSONDecodeError, ValueError) as e:
+            w(f"  {_C_RED}mcp.json is not valid JSON: {e}{_RST}\n")
+            w(f"  {_C_GRAY}  Fix the file manually, then re-run install.{_RST}\n")
+            w(f"  {_C_GRAY}  Common cause: trailing commas or missing quotes.{_RST}\n")
+            return
         existing.setdefault("mcpServers", {})
 
     added, skipped, patched_env = [], [], []

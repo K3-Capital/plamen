@@ -3,7 +3,7 @@
     "slither-analyzer": {
       "command": "slither-mcp",
       "args": [],
-      "_comment": "Install: pip install slither-mcp (or use full path to slither-mcp executable)"
+      "_comment": "EVM static analysis. Installed from custom-mcp/slither-mcp via plamen install. If not in PATH, replace with full path from: which slither-mcp (macOS/Linux) or where slither-mcp (Windows)"
     },
     "solana-fender": {
       "command": "python",

@@ -112,7 +112,7 @@ This will:
 - Merge permissions and env vars into `settings.json` (additive — won't remove your existing entries)
 - Merge MCP server definitions into `mcp.json` (won't overwrite your existing servers)
 - Inject Plamen's CLAUDE.md instructions between `<!-- PLAMEN:START -->` / `<!-- PLAMEN:END -->` markers
-- Install Python dependencies (~2GB for PyTorch embeddings)
+- Install Python dependencies (~1GB for PyTorch + all-MiniLM-L6-v2 model)
 - Build the RAG vulnerability database (using the Solodit key from Step 2)
 
 ## Step 4: Configure remaining API keys

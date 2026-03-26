@@ -88,16 +88,16 @@ git submodule update --init --recursive
 # Wrapper
 pip install -r requirements.txt
 
-# MCP servers (~2GB download -- includes PyTorch for embeddings)
+# MCP servers (~1GB download -- PyTorch + all-MiniLM-L6-v2 model)
 pip install -r custom-mcp/unified-vuln-db/requirements.txt
-pip install -r custom-mcp/solodit-scraper/requirements.txt
-pip install -r custom-mcp/defihacklabs-rag/requirements.txt
-pip install -e custom-mcp/solana-fender
 pip install -r custom-mcp/farofino-mcp/requirements.txt
+pip install -e custom-mcp/solana-fender
 
 # EVM only (requires Python 3.11+, solc)
 pip install -e custom-mcp/slither-mcp
 ```
+
+> On macOS/Linux, use `pip3 --user` instead of bare `pip` to install to user site-packages. On Homebrew Python or Ubuntu 23.04+, also add `--break-system-packages`. The `plamen install` command handles all this automatically.
 
 ### 3. Configure MCP servers
 
