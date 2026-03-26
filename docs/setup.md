@@ -90,7 +90,8 @@ git submodule update --init --recursive
 # Wrapper (lightweight — ~30s)
 pip install -r requirements.txt
 
-# MCP servers (no PyTorch — lightweight)
+# MCP servers (~1GB download -- PyTorch + all-MiniLM-L6-v2 model)
+pip install -r custom-mcp/unified-vuln-db/requirements.txt
 pip install -r custom-mcp/farofino-mcp/requirements.txt
 pip install -e custom-mcp/solana-fender
 
@@ -98,17 +99,7 @@ pip install -e custom-mcp/solana-fender
 pip install -e custom-mcp/slither-mcp
 ```
 
-### 2b. Install RAG dependencies (separate step — ~10-20 min)
-
-> **Optional but recommended.** RAG provides historical vulnerability matching during audits. Alternatively, run `plamen rag` which handles all of this automatically.
-
-```bash
-# RAG deps (~2GB download — PyTorch + embedding models)
-pip install -r custom-mcp/unified-vuln-db/requirements.txt
-pip install -r custom-mcp/solodit-scraper/requirements.txt
-pip install -r custom-mcp/defihacklabs-rag/requirements.txt
-pip install -e custom-mcp/unified-vuln-db
-```
+> On macOS/Linux, use `pip3 --user` instead of bare `pip` to install to user site-packages. On Homebrew Python or Ubuntu 23.04+, also add `--break-system-packages`. The `plamen install` command handles all this automatically.
 
 ### 3. Configure MCP servers
 
