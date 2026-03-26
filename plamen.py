@@ -433,7 +433,8 @@ def check_dependencies() -> bool:
     elif rag_count == 0:
         rag_status = f"{_C_RED}empty{_RST}"
     else:
-        rag_status = f"{_C_RED}not built{_RST}"
+        rag_status = (f"{_C_RED}not built{_RST}"
+                      f"  {_C_DARK_GRAY}run 'plamen rag' (~10 min, CPU intensive){_RST}")
     _box_row(w, bx, W,
              f"  {_C_GRAY}RAG DB{_RST}   vulnerability knowledge base",
              rag_status)
@@ -1012,34 +1013,45 @@ def _build_rag_db(w):
         w(f"  {_C_GRAY}Get a free key at https://solodit.cyfrin.io{_RST}\n")
         w(f"  {_C_GRAY}Add to ~/.claude/settings.json → \"env\": {{\"SOLODIT_API_KEY\": \"your_key\"}}{_RST}\n\n")
 
-    # Fixed timeouts. Solodit is network-bound (29 tags × rate-limit delay);
-    # DeFiHackLabs and Immunefi are fast with MiniLM (~2-3 min each).
-    solodit_timeout  = 1200  # 20 min — generous for slow networks + rate limiting
-    indexing_timeout =  600  # 10 min — more than enough for MiniLM on any hardware
-    max_pages        =    5  # 29 tags × 5 pages × 3.5s ≈ 8 min API time
+    # Adaptive timeouts: fanless Macs (MacBook Air) thermal-throttle under sustained ML
+    # load, so give them more time and fewer Solodit pages to stay within timeout.
+    fanless = _is_fanless_mac()
+    solodit_timeout  = 1800 if fanless else 1200  # 30 min / 20 min
+    indexing_timeout =  900 if fanless else  600  # 15 min / 10 min
+    max_pages        =    5 if fanless else   10  # 29 tags × pages × 3.5s delay
+
+    # On macOS/Linux, run the indexer at reduced CPU priority so it doesn't
+    # hog the machine. nice -n 10 yields CPU to other apps with ~10-20% throughput
+    # cost on an otherwise idle machine. Skipped on Windows (no nice command).
+    nice = "nice -n 10 " if sys.platform != "win32" else ""
 
     steps = [
         # (label, est, cmd, retry_cmd, timeout)
         # Solodit: no retry — a hanging API call won't improve on retry
         ("Solodit — live API",
-         "~10 min",
-         f'cd "{vuln_db_dir}" && {py} -m unified_vuln.indexer index -s solodit --max-pages {max_pages}',
+         f"~{'20' if fanless else '10'} min",
+         f'cd "{vuln_db_dir}" && {nice}{py} -m unified_vuln.indexer index -s solodit --max-pages {max_pages}',
          None,
          solodit_timeout),
         # DeFiHackLabs: local parsing + embedding; retry with same command is safe
         ("DeFiHackLabs — local",
          "~1 min",
-         f'cd "{vuln_db_dir}" && {py} -m unified_vuln.indexer index -s defihacklabs',
-         f'cd "{vuln_db_dir}" && {py} -m unified_vuln.indexer index -s defihacklabs',
+         f'cd "{vuln_db_dir}" && {nice}{py} -m unified_vuln.indexer index -s defihacklabs',
+         f'cd "{vuln_db_dir}" && {nice}{py} -m unified_vuln.indexer index -s defihacklabs',
          indexing_timeout),
         # Immunefi: first attempt fetches 139 URLs + embeds; retry skips the HTTP fetch
         # phase (uses cached immunefi_fetched.json) and goes straight to embedding
         ("Immunefi — writeups",
          "~2 min",
-         f'cd "{vuln_db_dir}" && {py} -m unified_vuln.indexer index -s immunefi',
-         f'cd "{vuln_db_dir}" && {py} -m unified_vuln.indexer index -s immunefi --skip-fetch',
+         f'cd "{vuln_db_dir}" && {nice}{py} -m unified_vuln.indexer index -s immunefi',
+         f'cd "{vuln_db_dir}" && {nice}{py} -m unified_vuln.indexer index -s immunefi --skip-fetch',
          indexing_timeout),
     ]
+
+    # Warn the user before the heavy CPU/RAM work begins.
+    w(f"  {_C_ORANGE}{_BOLD}NOTE:{_RST} {_C_ORANGE}RAG indexing is CPU and RAM intensive.{_RST}\n")
+    w(f"  {_C_GRAY}Your machine may feel sluggish for several minutes — this is normal.{_RST}\n")
+    w(f"  {_C_GRAY}Do not close this terminal or press Ctrl+C during indexing.{_RST}\n\n")
 
     for label, est, cmd, retry_cmd, timeout in steps:
         w(f"  {_C_ORANGE}>{_RST} {_C_WHITE}{label}{_RST}"

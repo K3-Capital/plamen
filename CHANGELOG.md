@@ -5,6 +5,31 @@ All notable changes to Plamen will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-03-27
+
+### Added
+- **EVM CHECK 2g**: Missing native ETH receiver detection — flags payable functions/contracts that lack a `receive()` or `fallback()` function
+- **DIMENSIONAL_ANALYSIS injectable skill**: Unit/dimension mismatch analysis for protocols using mixed fixed-point arithmetic (MIXED_DECIMALS flag)
+- **Move-Safety Agent architecture (Aptos/Sui)**: New `move-safety-core-directives` skill split from the 4 always-required skills (~950 lines total). Core directives (~130 lines) load into every breadth agent; a dedicated Move-Safety Agent gets full skills. Prevents attention saturation on dense methodology.
+- **Phase 5 batched verifier spawning**: When >8 verifiers needed, splits into severity-tier batches (A: Chain+High opus, B/C: Medium sonnet, D: Low+Info single agent). Crash-resume support — skips already-verified hypotheses on restart. Short return messages (~50 tokens/agent) prevent orchestrator context bloat.
+- **New niche skills**: `callback-receiver-safety` (EVM callback handler access control, state inflation), `multi-step-operation-safety` (authorization conflicts, on-behalf-of targeting)
+- **New injectable skill**: `lending-protocol-security` for lending protocol audits
+- **Depth template improvements**: ANCHORING REJECTION LIST (7-row table of insufficient REFUTED/CONTESTED justifications), File Coverage Map task in inventory prompt, MIXED_DECIMALS flag in recon
+
+### Fixed
+- **`nice -n 10` on Unix**: Indexer processes now run at reduced CPU priority on macOS/Linux — keeps machine responsive during RAG build (~10-20% throughput cost on idle machine; none on loaded machine)
+- **Adaptive RAG timeouts**: Fanless Macs (MacBook Air) get extended timeouts (1800s Solodit, 900s embedding) and reduced Solodit page count (5 vs 10) to prevent thermal-throttle timeouts
+- **Resource warning banner**: `plamen rag` now warns before indexing: "RAG indexing is CPU and RAM intensive. Your machine may feel sluggish — do not close this terminal."
+- **Status box RAG hint**: "not built" now shows "run 'plamen rag' (~10 min, CPU intensive)" hint
+- **`sys.executable` MCP injection**: `_merge_mcp_json` replaces `"python"`/`"python3"` with `sys.executable` at install time — eliminates "spawn python ENOENT" on macOS/Linux without manual sed
+- **Malformed JSON handling**: `_merge_settings_json` and `_merge_mcp_json` now show friendly errors (not raw tracebacks) when existing config files have trailing commas or syntax errors
+- **Removed dead package installs**: `solodit-scraper` and `defihacklabs-rag` removed from `_setup_python_deps` — `unified-vuln-db` handles all RAG indexing internally; `defihacklabs-rag` had `openai>=1.0.0` as unnecessary hard dep
+- **`plamen rag` dep-guard**: `_build_rag_db` auto-installs missing RAG deps before indexing — `plamen rag` is now self-healing after a fresh clone or partial install
+- **Sentence-transformers quick-check**: `_setup_python_deps` quick-check now uses `import sentence_transformers, chromadb` instead of `import torch` — avoids 2-3s torch cold-start on every `plamen setup`
+- **Pip `--user` args fix**: Corrected `[3:]` → `[4:]` slice bug that produced `--user --user` args
+- **Always MiniLM embeddings**: Removed Nomic/Voyage model selection — always uses `all-MiniLM-L6-v2` (384-dim, ~90MB). Eliminates RAM crashes on 16GB M1 Macs.
+- **`_python_bin()` space-quoting**: Uses `sys.executable` with double-quote wrapping for paths containing spaces
+
 ## [1.0.13] - 2026-03-26
 
 ### Changed
