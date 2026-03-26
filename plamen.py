@@ -78,6 +78,7 @@ VERSION = _read_version()
 # ── Constants ────────────────────────────────────────────────
 _BACK = "__back__"
 _MAX_LINE = 48  # max visible chars for any prompt line (W - 4)
+_RAG_MIN_ENTRIES = 500  # below this the DB is considered incomplete
 
 _STYLE = InquirerPyStyle({
     "questionmark": "#ff7800 bold",
@@ -831,10 +832,15 @@ def _should_use_fast_rag() -> bool:
 
 
 def _build_rag_db(w):
-    """Run the RAG indexer pipeline. Returns True on success."""
+    """Run the RAG indexer pipeline. Installs deps first if needed. Returns True on success."""
     vuln_db_dir = os.path.join(PLAMEN_HOME, "custom-mcp", "unified-vuln-db")
     if not os.path.isdir(vuln_db_dir):
         w(f"  {_C_RED}unified-vuln-db not found at {vuln_db_dir}{_RST}\n")
+        return False
+
+    # Install RAG deps (PyTorch, chromadb, etc.) if not already present
+    if not _install_rag_deps(w):
+        w(f"  {_C_RED}RAG dependency installation failed — cannot build database{_RST}\n")
         return False
 
     py = _python_bin()
@@ -939,18 +945,21 @@ def _quick_check_required() -> bool:
 
 
 def _setup_python_deps(w):
-    """Install all Python dependencies if missing. Returns True if all installed."""
+    """Install core Python dependencies (NOT RAG). Returns True if all installed.
+
+    RAG deps (PyTorch ~2GB, chromadb, sentence-transformers) are installed
+    separately via `plamen rag` to avoid 1+ hour installs and crashes on
+    constrained machines (fanless Macs, <16GB RAM).
+    """
     base = PLAMEN_HOME
     py = _python_bin()
+
+    # Core: wrapper UI + lightweight MCP servers (no PyTorch/chromadb)
     req_files = [
         ("Plamen wrapper", "requirements.txt"),
-        ("unified-vuln-db", "custom-mcp/unified-vuln-db/requirements.txt"),
-        ("solodit-scraper", "custom-mcp/solodit-scraper/requirements.txt"),
-        ("defihacklabs-rag", "custom-mcp/defihacklabs-rag/requirements.txt"),
         ("farofino-mcp", "custom-mcp/farofino-mcp/requirements.txt"),
     ]
     editable_pkgs = [
-        ("unified-vuln-db", "custom-mcp/unified-vuln-db"),
         ("solana-fender", "custom-mcp/solana-fender"),
         ("slither-mcp (EVM)", "custom-mcp/slither-mcp"),
     ]
@@ -963,26 +972,86 @@ def _setup_python_deps(w):
         core_ok = False
 
     if core_ok:
-        # Quick-check: try importing a deep dep
-        try:
-            import torch, chromadb  # noqa: F401
-            deep_ok = True
-        except ImportError:
-            deep_ok = False
-    else:
-        deep_ok = False
-
-    if core_ok and deep_ok:
-        w(f"  {_C_GREEN}Python dependencies already installed{_RST}\n\n")
+        w(f"  {_C_GREEN}Python dependencies already installed{_RST}\n")
+        # Hint about RAG if not built
+        if _probe_rag_db() <= 0:
+            w(f"  {_C_GRAY}RAG not installed — run 'plamen rag' separately (~10-20 min){_RST}\n")
+        w("\n")
         return True
 
     w(f"  {_C_ORANGE}>{_RST} {_C_WHITE}Installing Python dependencies...{_RST}"
-      f"  {_C_DARK_GRAY}~2-5 min (PyTorch is ~2GB){_RST}\n\n")
+      f"  {_C_DARK_GRAY}~30s{_RST}\n\n")
     sys.stdout.flush()
 
     # Build pip flags that work on PEP 668 systems (macOS Homebrew, Ubuntu 23.04+)
     pip_flags = " ".join(a for a in _pip_install_args()[3:])  # skip "python -m pip install"
     pip_base = f'{py} -m pip install {pip_flags}'.rstrip()
+
+    all_ok = True
+    for label, req in req_files:
+        path = os.path.join(base, req)
+        if not os.path.isfile(path):
+            w(f"  {_C_DARK_GRAY}  skipping {label} — {req} not found{_RST}\n")
+            continue
+        w(f"  {_C_ORANGE}>{_RST} {label}\n")
+        sys.stdout.flush()
+        if not _run_install_cmd(f'{pip_base} -r "{path}"', retries=1):
+            w(f"  {_C_RED}  failed{_RST}\n")
+            all_ok = False
+        else:
+            w(f"  {_C_GREEN}  done{_RST}\n")
+
+    for label, pkg in editable_pkgs:
+        path = os.path.join(base, pkg)
+        if not os.path.isdir(path):
+            w(f"  {_C_DARK_GRAY}  skipping {label} — not found{_RST}\n")
+            continue
+        w(f"  {_C_ORANGE}>{_RST} {label}\n")
+        sys.stdout.flush()
+        if not _run_install_cmd(f'{pip_base} -e "{path}"', retries=1):
+            w(f"  {_C_RED}  failed (non-critical){_RST}\n")
+        else:
+            w(f"  {_C_GREEN}  done{_RST}\n")
+
+    w("\n")
+    return all_ok
+
+
+def _install_rag_deps(w) -> bool:
+    """Install RAG-specific Python dependencies (PyTorch, chromadb, sentence-transformers).
+
+    These are heavy (~2GB+ download, sustained CPU during install) and separated
+    from core setup to avoid crashing constrained machines.
+    Returns True if deps are available.
+    """
+    # Quick check: already installed?
+    try:
+        import chromadb  # noqa: F401
+        import sentence_transformers  # noqa: F401
+        w(f"  {_C_GREEN}RAG dependencies already installed{_RST}\n\n")
+        return True
+    except ImportError:
+        pass
+
+    base = PLAMEN_HOME
+    py = _python_bin()
+    pip_flags = " ".join(a for a in _pip_install_args()[3:])
+    pip_base = f'{py} -m pip install {pip_flags}'.rstrip()
+
+    # Warn about the download size and time
+    w(f"  {_C_ORANGE}{_BOLD}Installing RAG dependencies{_RST}\n")
+    w(f"  {_C_GRAY}This downloads PyTorch (~2GB) and embedding models.{_RST}\n")
+    w(f"  {_C_GRAY}Expected time: 5-15 minutes depending on connection speed.{_RST}\n\n")
+    sys.stdout.flush()
+
+    req_files = [
+        ("unified-vuln-db", "custom-mcp/unified-vuln-db/requirements.txt"),
+        ("solodit-scraper", "custom-mcp/solodit-scraper/requirements.txt"),
+        ("defihacklabs-rag", "custom-mcp/defihacklabs-rag/requirements.txt"),
+    ]
+    editable_pkgs = [
+        ("unified-vuln-db", "custom-mcp/unified-vuln-db"),
+    ]
 
     all_ok = True
     for label, req in req_files:
@@ -1409,7 +1478,7 @@ def run_uninstall():
 
 
 def run_setup():
-    """Full setup flow: Python deps → config files → toolchain → RAG → re-check."""
+    """Full setup flow: Python deps → config files → toolchain → re-check. RAG is separate (plamen rag)."""
     w = sys.stdout.write
 
     # ── Symlink install (if repo is not directly in ~/.claude) ─
@@ -1447,12 +1516,15 @@ def run_setup():
         if group_missing:
             missing[group] = group_missing
 
-    rag_empty = _rag_needs_build()
     rag_count = _probe_rag_db()
 
-    if not missing and rag_count > 0 and not rag_empty:
-        w(f"  {_C_GREEN}Everything is set up ({rag_count:,} RAG entries).{_RST}\n")
-        w(f"  {_C_GRAY}To rebuild RAG: plamen rag{_RST}\n\n")
+    if not missing:
+        w(f"  {_C_GREEN}All chain toolchains installed.{_RST}\n")
+        if rag_count <= 0:
+            w(f"  {_C_GRAY}RAG not built — run 'plamen rag' separately (~10-20 min){_RST}\n")
+        elif rag_count > 0:
+            w(f"  {_C_GREEN}RAG database: {rag_count:,} entries{_RST}\n")
+        w("\n")
         return
 
     # ── Build checkbox choices with time estimates ───────────
@@ -1460,13 +1532,6 @@ def run_setup():
     for group, entries in missing.items():
         names = ", ".join(d for d, _, _, _, _, _, _ in entries)
         item_choices.append({"name": f"{group:8s} {names}", "value": group})
-
-    if rag_empty:
-        item_choices.append({"name": "RAG DB   vulnerability knowledge base",
-                             "value": "__rag__"})
-    elif rag_count > 0:
-        item_choices.append({"name": f"RAG DB   rebuild/extend ({rag_count:,} entries currently)",
-                             "value": "__rag__"})
 
     all_values = [c["value"] for c in item_choices]
 
@@ -1490,8 +1555,6 @@ def run_setup():
                     if not prereq.get("check", lambda: True)():
                         prereq_note += f" + {prereq.get('label', pname)}"
             w(f"    {_C_DARK_GRAY}{display}: {est}{prereq_note}{_RST}\n")
-    if rag_empty:
-        w(f"    {_C_DARK_GRAY}RAG DB: ~3-5 min (downloads + indexes){_RST}\n")
     w(f"\n  {_C_GRAY}Press Enter to begin installation{_RST}\n\n")
     sys.stdout.flush()
 
@@ -1520,13 +1583,6 @@ def run_setup():
 
     for group in selected:
         if group == "__skip__":
-            continue
-
-        if group == "__rag__":
-            w(f"\n  {_BOLD}{_C_WHITE}Building RAG vulnerability database...{_RST}"
-              f"  {_C_DARK_GRAY}~3-5 min{_RST}\n\n")
-            sys.stdout.flush()
-            _build_rag_db(w)
             continue
 
         w(f"\n  {_BOLD}{_C_WHITE}Installing {group} toolchain...{_RST}\n")
@@ -1577,6 +1633,8 @@ def run_setup():
     w(f"  {_C_GRAY}Re-checking...{_RST}\n\n")
     sys.stdout.flush()
     check_dependencies()
+    if _probe_rag_db() <= 0:
+        w(f"  {_C_GRAY}Next step: run 'plamen rag' to build the vulnerability knowledge base (~10-20 min){_RST}\n")
     w("\n")
 
 
@@ -2000,7 +2058,7 @@ def select_mode() -> str:
             {"name": "Thorough   35-95 agents | Max plan  | ALL severities + fuzz", "value": "thorough"},
             Separator(),
             {"name": "Compare    variable     | DELTA report",               "value": "compare"},
-            {"name": "Setup      install tools + build RAG DB",              "value": "setup"},
+            {"name": "Setup      install chain toolchains",                  "value": "setup"},
         ],
         default="light",
         pointer="  >",
@@ -2375,8 +2433,8 @@ def main():
             w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}thorough{_RST} /path/to/project    Audit in Thorough mode\n")
             w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}light{_RST} /path/to/project       Audit in Light mode\n")
             w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}compare{_RST}                      Diff reports\n")
-            w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}setup{_RST}                        Install tools + build RAG\n")
-            w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}rag{_RST}                          Rebuild RAG database only\n")
+            w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}setup{_RST}                        Install chain toolchains\n")
+            w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}rag{_RST}                          Install RAG deps + build DB\n")
             w(f"    {_C_ORANGE}plamen{_RST} {_C_GRAY}uninstall{_RST}                    Remove from ~/.claude\n")
             w(f"\n  {_C_WHITE}Options (for audit modes):{_RST}\n")
             w(f"    {_C_GRAY}--docs{_RST} PATH              Whitepaper or spec file\n")

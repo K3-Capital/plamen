@@ -82,21 +82,30 @@ git submodule update --init --recursive
 
 > This clones into `~/.plamen`, keeping it separate from Claude Code's `~/.claude`. The installer creates symlinks so Claude Code discovers Plamen's agents, rules, and commands. Your existing `~/.claude` settings are preserved via additive config merging.
 
-### 2. Install Python dependencies
+### 2. Install core Python dependencies
 
 ```bash
-# Wrapper
+# Wrapper (lightweight — ~30s)
 pip install -r requirements.txt
 
-# MCP servers (~2GB download -- includes PyTorch for embeddings)
-pip install -r custom-mcp/unified-vuln-db/requirements.txt
-pip install -r custom-mcp/solodit-scraper/requirements.txt
-pip install -r custom-mcp/defihacklabs-rag/requirements.txt
-pip install -e custom-mcp/solana-fender
+# MCP servers (no PyTorch — lightweight)
 pip install -r custom-mcp/farofino-mcp/requirements.txt
+pip install -e custom-mcp/solana-fender
 
 # EVM only (requires Python 3.11+, solc)
 pip install -e custom-mcp/slither-mcp
+```
+
+### 2b. Install RAG dependencies (separate step — ~10-20 min)
+
+> **Optional but recommended.** RAG provides historical vulnerability matching during audits. Alternatively, run `plamen rag` which handles all of this automatically.
+
+```bash
+# RAG deps (~2GB download — PyTorch + embedding models)
+pip install -r custom-mcp/unified-vuln-db/requirements.txt
+pip install -r custom-mcp/solodit-scraper/requirements.txt
+pip install -r custom-mcp/defihacklabs-rag/requirements.txt
+pip install -e custom-mcp/unified-vuln-db
 ```
 
 ### 3. Configure MCP servers

@@ -1065,8 +1065,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     if db is None:
         return [format_response({
             "error": "Database not available",
-            "reason": "Embedding model failed to load. Try restarting the MCP server.",
-            "fallback": "Use Slither + Three Prompts methodology instead."
+            "reason": "RAG dependencies not installed or database not built. Run 'plamen rag' to install dependencies and build the vulnerability knowledge base.",
+            "fallback": "Pipeline continues without RAG — use code analysis, grep, and WebSearch instead."
         })]
     
     # ═══════════════════════════════════════════════════════════════════════════

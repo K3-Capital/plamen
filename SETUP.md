@@ -67,25 +67,7 @@ git submodule update --init --recursive
 
 > This clones into `~/.plamen`, keeping it separate from your Claude Code config at `~/.claude`. The installer creates symlinks — your existing settings, MCP servers, and CLAUDE.md content are preserved.
 
-## Step 2: Set API keys BEFORE installing
-
-The installer builds the RAG vulnerability database during setup. The Solodit source (3400+ audit findings — the largest and most important source) requires an API key. **Set this before running the installer**, otherwise Solodit indexing will fail silently and you'll get a weaker RAG database.
-
-Set the Solodit API key as an environment variable (free key from https://solodit.cyfrin.io):
-
-**Linux / macOS:**
-```bash
-export SOLODIT_API_KEY=your_key_here
-```
-
-**Windows (PowerShell):**
-```powershell
-$env:SOLODIT_API_KEY = "your_key_here"
-```
-
-> Other API keys (Etherscan, Tavily, Helius, RPC URL) are configured AFTER install in `~/.claude/mcp.json`. Only Solodit is needed before install because the RAG indexer runs during setup.
-
-## Step 3: Run the installer
+## Step 2: Run the installer
 
 Detect my OS and run the appropriate command:
 
@@ -99,15 +81,38 @@ cd ~/.plamen && python3 plamen.py install
 cd $HOME\.plamen; python plamen.py install
 ```
 
-> Python dependencies (`rich`, `InquirerPy`, PyTorch, etc.) are installed automatically on first run. On macOS/Linux use `python3`, on Windows use `python`.
+> Core Python dependencies (`rich`, `InquirerPy`) are installed automatically. On macOS/Linux use `python3`, on Windows use `python`.
 
 This will:
 - Symlink Plamen's agents, rules, prompts, skills, and commands into `~/.claude/`
 - Merge permissions and env vars into `settings.json` (additive — won't remove your existing entries)
 - Merge MCP server definitions into `mcp.json` (won't overwrite your existing servers)
 - Inject Plamen's CLAUDE.md instructions between `<!-- PLAMEN:START -->` / `<!-- PLAMEN:END -->` markers
-- Install Python dependencies (~2GB for PyTorch embeddings)
-- Build the RAG vulnerability database (using the Solodit key from Step 2)
+- Install core Python dependencies (lightweight — no PyTorch)
+
+> **RAG database is NOT built during install.** Run `plamen rag` separately after install (Step 3b). This avoids 1+ hour installs and crashes on memory-constrained machines.
+
+## Step 3b: Build the RAG database (separate step)
+
+The RAG vulnerability knowledge base provides historical vulnerability matching during audits. It downloads PyTorch (~2GB), embedding models, and indexes findings from Solodit, DeFiHackLabs, and Immunefi.
+
+**Set the Solodit API key first** (free from https://solodit.cyfrin.io — largest source, 3400+ findings):
+
+**Linux / macOS:**
+```bash
+export SOLODIT_API_KEY=your_key_here
+plamen rag
+```
+
+**Windows (PowerShell):**
+```powershell
+$env:SOLODIT_API_KEY = "your_key_here"
+plamen rag
+```
+
+This takes ~10-20 minutes and is CPU/RAM intensive. On constrained machines (MacBook Air, <16GB RAM), a lightweight embedding model is auto-selected.
+
+> **RAG is optional.** The pipeline degrades gracefully without it — findings still use code analysis, but lack historical pattern matching. You can always build it later.
 
 ## Step 4: Configure remaining API keys
 
@@ -119,9 +124,6 @@ Edit `~/.claude/mcp.json`:
 - Update the `command` paths for Python and slither-mcp to match my system
 
 For the Python command path, run `which python3` (macOS/Linux) or `where python` (Windows) and use that path.
-
-> If you skipped Step 2 or want to rebuild the RAG database after adding the Solodit key, run:
-> `export SOLODIT_API_KEY=your_key_here && python3 -m unified_vuln.indexer index -s solodit --max-pages 10` (use `python` on Windows). This works from any directory after install.
 
 ## Step 5: Verify installation
 
@@ -188,8 +190,8 @@ After setup, I can start an audit by typing `plamen` in my terminal or `/plamen`
 
 Available commands (work from any directory after PATH is set):
 - `plamen` — interactive wizard
-- `plamen setup` — install tools + build RAG
-- `plamen rag` — rebuild RAG database only
+- `plamen setup` — install chain toolchains
+- `plamen rag` — install RAG deps + build DB (~10-20 min)
 - `plamen uninstall` — remove Plamen from ~/.claude
 
 > **Important**: Always use `plamen` (not `python3 plamen.py`) after PATH is set up. The `python3 plamen.py` form only works from inside `~/.plamen/`.

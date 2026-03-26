@@ -15,8 +15,8 @@ Interactive UI with dependency checking, tool installation, cost estimation, and
 ```bash
 plamen core /path/to/project --docs whitepaper.pdf
 plamen thorough /path/to/project --scope scope.txt --network ethereum --proven-only
-plamen setup                        # install tools + build RAG
-plamen rag                          # rebuild RAG database only
+plamen setup                        # install chain toolchains
+plamen rag                          # install RAG deps + build DB
 plamen uninstall                    # remove Plamen from ~/.claude
 ```
 
@@ -52,7 +52,7 @@ Or run directly: `python3 ~/.plamen/plamen.py` (macOS/Linux) or `python ~/.plame
 
 | | Terminal Wrapper | Claude Code |
 |---|---|---|
-| **First time** | Use this -- Setup installs tools + builds RAG | Need tools already installed |
+| **First time** | Use this -- Setup installs toolchains, `plamen rag` builds RAG separately | Need tools already installed |
 | **Cost estimate** | Shows token/cost estimate before launch | No estimate |
 | **Dependency check** | Full toolchain probe with install option | Basic probe |
 | **Daily use** | `plamen core .` | `/plamen core .` |

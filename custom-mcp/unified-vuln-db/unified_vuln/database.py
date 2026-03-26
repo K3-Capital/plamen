@@ -11,8 +11,14 @@ import os
 import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union, Callable
-import chromadb
-from chromadb.config import Settings
+try:
+    import chromadb
+    from chromadb.config import Settings
+    _CHROMADB_AVAILABLE = True
+except ImportError:
+    _CHROMADB_AVAILABLE = False
+    chromadb = None
+    Settings = None
 from rich.console import Console
 
 from .schema import Vulnerability, Source
@@ -902,6 +908,11 @@ def get_db(
     embedding_dimensions: int = 768,
 ) -> VulnerabilityDB:
     """Get the database singleton."""
+    if not _CHROMADB_AVAILABLE:
+        raise ImportError(
+            "RAG dependencies not installed (chromadb, sentence-transformers). "
+            "Run 'plamen rag' to install them and build the vulnerability database."
+        )
     global _db_instance
     if _db_instance is None:
         _db_instance = VulnerabilityDB(

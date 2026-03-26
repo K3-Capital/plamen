@@ -182,6 +182,8 @@ For each chain hypothesis:
 3. If local results < 5: search_solodit_live(keywords='{chain pattern}', impact=['HIGH','MEDIUM'], quality_score=3, max_results=20)
 4. If historical precedent found → upgrade chain severity
 
+**RAG fallback**: If unified-vuln-db tools fail or return errors (missing deps, timeout, empty DB), skip RAG validation for chains. Use WebSearch as fallback: search `site:solodit.xyz {chain pattern}` for each chain hypothesis. If WebSearch also fails, proceed without historical validation — chain severity is determined by the postcondition-precondition match logic above, not by RAG. Do NOT retry failed MCP calls.
+
 ## Output
 
 Update {SCRATCHPAD}/hypotheses.md - add chain hypotheses to the hypothesis table

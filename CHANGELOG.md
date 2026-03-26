@@ -5,6 +5,13 @@ All notable changes to Plamen will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.13] - 2026-03-26
+
+### Changed
+- **RAG separated from `plamen setup`**: The `setup` command no longer installs PyTorch (~2GB), chromadb, sentence-transformers, or builds the RAG database. These are now installed and built exclusively via `plamen rag`. This prevents 1+ hour install times and crashes on memory-constrained machines (M1 Macs with 16GB RAM, fanless MacBook Airs). Setup now completes in ~30 seconds.
+- **New `_install_rag_deps()` function**: `plamen rag` auto-installs RAG Python dependencies before building the index. Users no longer need to manually pip install anything — just run `plamen rag` when ready.
+- **Fixed `_RAG_MIN_ENTRIES` undefined**: Added missing constant (500) that would crash `check_dependencies()` at runtime.
+
 ## [1.0.12] - 2026-03-25
 
 ### Added
