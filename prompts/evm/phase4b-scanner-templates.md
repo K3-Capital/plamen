@@ -93,6 +93,9 @@ For each multi-step operation (batch calls, multicall, loops over tokens), enume
 Skip this check if no `depositFor`, `stakeFor`, `delegateTo`, `mintFor`, `withdrawFor`, or similar on-behalf-of function patterns are detected. If `{SCRATCHPAD}/niche_multi_step_safety_findings.md` exists and is non-empty, limit this to listing affected functions in a table [Function | Target Param | Note] — do NOT trace execution or compute impacts.
 For each public/external function that writes state keyed by an address parameter (e.g., `depositFor(target)`, `stakeFor(target)`, `delegateTo(target)`): can any protocol infrastructure contract (router, vault, pool, strategy) be used as the target? If yes, what state is imposed on it, and does it break protocol operations? → FINDING.
 
+## CHECK 2g: Missing Native ETH Receiver
+For each contract in scope, determine whether it is **designed to accept native ETH**. Evidence of design intent (any one is sufficient): (1) design_context.md or docs state it handles native tokens/ETH, (2) code branches on native-ETH sentinel values (`Currency.isAddressZero()`, `token == address(0)`, `isNative`, `NATIVE_TOKEN`), (3) operational implications indicate ETH inflows from external sources (sweeps, refunds, WETH unwraps, Uniswap V4 native currency support), (4) a parent or caller contract sends ETH to `address(this)` via `.transfer()`, `.send()`, or `.call{value:}`. If the contract is designed to accept native ETH but declares no `receive()` or `fallback() payable` → FINDING (MEDIUM if it breaks a core lifecycle flow; LOW if convenience path only).
+
 ## Output
 - Maximum 5 findings [BLIND-A1] through [BLIND-A5]
 - Use standard finding format
