@@ -40,8 +40,8 @@
 |   +-- solana/                        # 20 Solana skill templates
 |   +-- aptos/                         # 21 Aptos skill templates
 |   +-- sui/                           # 21 Sui skill templates
-|   +-- injectable/                    # 5 protocol-type-specific skills
-|   +-- niche/                         # 5 flag-triggered niche agents
+|   +-- injectable/                    # 7 protocol-type-specific skills
+|   +-- niche/                         # 8 flag-triggered niche agents
 |
 +-- custom-mcp/                        # MCP servers
 |   +-- unified-vuln-db/               # RAG database (code only, data/ gitignored)

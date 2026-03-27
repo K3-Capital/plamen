@@ -65,7 +65,7 @@ The unified-vuln-db MCP server (`custom-mcp/unified-vuln-db/`) powers RAG search
 ### Prerequisites
 
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed
-- Python 3.10+ (for CLI wrapper and MCP servers)
+- Python 3.11-3.12 (for CLI wrapper and MCP servers)
 - Node.js 18+ (for Claude Code)
 
 ### Local Setup

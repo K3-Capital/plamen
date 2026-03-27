@@ -17,7 +17,7 @@ Always-available, triggered by pattern flags from recon. Examples: `ORACLE_ANALY
 
 ### Injectable Skills (protocol-type-specific)
 
-Loaded only when recon classifies the protocol as a matching type. Appended to existing agents:
+Loaded only when recon classifies the protocol as a matching type. Appended to existing agents (7 total):
 
 | Skill | Trigger |
 |-------|---------|
@@ -26,10 +26,12 @@ Loaded only when recon classifies the protocol as a matching type. Appended to e
 | NFT_PROTOCOL_SECURITY | ERC721/1155 with marketplace/staking/collateral |
 | GOVERNANCE_ATTACK_VECTORS | Governor, Timelock, voting, proposal |
 | OUTCOME_DETERMINISM | Finite-pool selection with depletion fallback |
+| LENDING_PROTOCOL_SECURITY | liquidate/borrow/repay/collateral/LTV/healthFactor |
+| DEX_INTEGRATION_SECURITY | swap/addLiquidity/removeLiquidity (non-DEX protocols) |
 
 ### Niche Agents (flag-triggered standalone)
 
-Spawn as independent agents (1 depth budget slot each):
+Spawn as independent agents (1 depth budget slot each, 8 total):
 
 | Agent | Trigger |
 |-------|---------|
@@ -38,6 +40,9 @@ Spawn as independent agents (1 depth budget slot each):
 | SPEC_COMPLIANCE_AUDIT | `HAS_DOCS` flag |
 | SIGNATURE_VERIFICATION_AUDIT | `HAS_SIGNATURES` flag |
 | SEMANTIC_CONSISTENCY_AUDIT | `HAS_MULTI_CONTRACT` flag |
+| MULTI_STEP_OPERATION_SAFETY | `MULTI_STEP_OPS` flag (approve/delegate + on-behalf-of) |
+| CALLBACK_RECEIVER_SAFETY | `OUTCOME_CALLBACK` flag (EVM only) |
+| DIMENSIONAL_ANALYSIS | `MIXED_DECIMALS` flag (EVM only) |
 
 ---
 

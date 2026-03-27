@@ -1,8 +1,8 @@
-# Plamen
+# Plamen (v1.1.3)
 
 Autonomous smart contract security auditor for [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
-Orchestrates 15-95 AI agents across 8 phases to produce audit reports with verified PoC exploits. Supports **EVM/Solidity**, **Solana/Anchor**, **Aptos Move**, and **Sui Move**.
+Orchestrates 18-100 AI agents across 8 phases to produce audit reports with verified PoC exploits. Supports **EVM/Solidity**, **Solana/Anchor**, **Aptos Move**, and **Sui Move**.
 
 ---
 
@@ -156,9 +156,9 @@ Or inside Claude Code: `/plamen`
 
 | Mode | Plan | Agents | Key Features |
 |------|------|--------|-------------|
-| **Light** | Pro | ~15-18 | Fast scan, all Sonnet, no fuzzing |
-| **Core** | Max | ~25-45 | Full depth, PoC verification for Medium+ |
-| **Thorough** | Max | ~35-95 | Iterative depth, invariant fuzzing, Medusa, skeptic-judge |
+| **Light** | Pro | ~18-22 | Fast scan, all Sonnet, no fuzzing |
+| **Core** | Max | ~30-50 | Full depth, PoC verification for Medium+ |
+| **Thorough** | Max | ~40-100 | Iterative depth, invariant fuzzing, Medusa, skeptic-judge |
 
 See [docs/audit-modes.md](docs/audit-modes.md) for the full comparison.
 

@@ -78,17 +78,17 @@ AskUserQuestion(questions=[{
     {
       label: "Light (Pro plan)",
       description: "Lightweight audit — all Sonnet agents, fits Pro rate limits",
-      preview: "~15-18 agents (all Sonnet/Haiku — no Opus)\n\nPipeline:\n  Recon (2) → Breadth (2-3) → Inventory\n  → Depth (4 merged) → Chain (1)\n  → Verify Medium+ → Report ALL (2)\n\nReports all severities. PoC verification targets Medium+.\n\nSkips:\n  · RAG meta-buffer + fork ancestry\n  · Semantic invariants (state consistency\n    bugs harder to detect — use Core for\n    DeFi protocols with complex state)\n  · Niche agents\n  · Confidence scoring + RAG Sweep\n  · Invariant/Medusa fuzz\n\nBest for: Pro plan, codebases < 3000 lines"
+      preview: "~18-22 agents (all Sonnet/Haiku — no Opus)\n\nPipeline:\n  Recon (2) → Breadth (3-4) → Inventory\n  → Depth (4 merged) → Chain (1)\n  → Verify Medium+ → Report ALL (2)\n\nReports all severities. PoC verification targets Medium+.\n\nSkips:\n  · RAG meta-buffer + fork ancestry\n  · Semantic invariants (state consistency\n    bugs harder to detect — use Core for\n    DeFi protocols with complex state)\n  · Niche agents\n  · Confidence scoring + RAG Sweep\n  · Invariant/Medusa fuzz\n\nBest for: Pro plan, codebases < 3000 lines"
     },
     {
       label: "Core (Recommended)",
       description: "Standard audit — reports all severities, PoC-verifies Medium+",
-      preview: "~25-45 agents (requires Max plan)\n\nPipeline:\n  Breadth → Inventory → Depth (iter 1)\n  → Chains → Verify Medium+ → Report ALL\n\nReports all severities (Low/Info included).\nPoC verification targets Medium+ findings.\n\nSkips:\n  · Breadth re-scan (3b/3c)\n  · Depth iterations 2-3\n  · Design stress testing\n  · Invariant fuzz campaign\n  · Fuzz variants in verification\n\nScoring: 2-axis (Evidence + Analysis Quality)"
+      preview: "~30-50 agents (requires Max plan)\n\nPipeline:\n  Breadth (5-9) → Inventory → Depth (iter 1)\n  → Niche agents → Chains → Verify Medium+\n  → Report ALL\n\nReports all severities (Low/Info included).\nPoC verification targets Medium+ findings.\n\nSkips:\n  · Breadth re-scan (3b/3c)\n  · Depth iterations 2-3\n  · Design stress testing\n  · Invariant fuzz campaign\n  · Fuzz variants in verification\n\nScoring: 2-axis (Evidence + Analysis Quality)"
     },
     {
       label: "Thorough",
       description: "Deep audit — iterative depth, fuzz variants, re-scan",
-      preview: "~35-95 agents (requires Max plan)\n\nPipeline:\n  Breadth → Re-scan (2 iters) → Per-contract\n  → Inventory → Depth (1-3 iters, Devil's Advocate)\n  → Chains → Verify ALL severities (with fuzz)\n  → Skeptic-Judge for HIGH/CRIT\n\nIncludes:\n  · Breadth re-scan + per-contract analysis\n  · Invariant fuzz campaign (EVM)\n  · Medusa stateful fuzzing (EVM, if installed)\n  · Design stress testing\n  · Skeptic-Judge adversarial verification (HIGH/CRIT)\n  · Fuzz variants in verification\n  · Low/Info findings verified\n\nScoring: 4-axis (Evidence, Consensus, Quality, RAG)"
+      preview: "~40-100 agents (requires Max plan)\n\nPipeline:\n  Breadth (5-9) → Re-scan (2 iters) → Per-contract\n  → Inventory → Depth (1-3 iters, Devil's Advocate)\n  → Niche agents (up to 8) → Chains\n  → Verify ALL severities (with fuzz)\n  → Skeptic-Judge for HIGH/CRIT\n\nIncludes:\n  · Breadth re-scan + per-contract analysis\n  · Invariant fuzz campaign (EVM)\n  · Medusa stateful fuzzing (EVM, if installed)\n  · Design stress testing (unconditional)\n  · Skeptic-Judge adversarial verification (HIGH/CRIT)\n  · Fuzz variants in verification\n  · Low/Info findings verified\n  · Cross-batch consistency check\n\nScoring: 4-axis (Evidence, Consensus, Quality, RAG)"
     },
     {
       label: "Compare",

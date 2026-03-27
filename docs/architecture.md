@@ -15,7 +15,7 @@
    +--------------+          +--------------+          +--------------+
    |  Phase 1     |          |  Phase 2     |          |  Phase 3     |
    |  RECON       |--------> |  INSTANTIATE |--------> |  BREADTH     |
-   |  (4 agents)  |          |  (orchestr.) |          |  (2-7 agents)|
+   |  (4 agents)  |          |  (orchestr.) |          |  (5-9 agents)|
    +--------------+          +--------------+          +------+-------+
                                                               |
           +---------------------------------------------------+
@@ -74,7 +74,7 @@ Produces 17+ scratchpad artifacts consumed by all downstream phases.
 
 Reads the BINDING MANIFEST, resolves skill templates, applies merge hierarchy (max 3 skills/agent), and composes agent prompts with instantiated parameters.
 
-### Phase 3: Parallel Breadth Analysis (2-7 agents)
+### Phase 3: Parallel Breadth Analysis (5-9 agents)
 
 All agents spawned in a single message. Each runs a targeted sweep per vulnerability class across its scope, producing findings with precondition/postcondition analysis.
 
@@ -110,7 +110,7 @@ Sonnet agent enumerates write sites, defines semantic invariants, detects mirror
 | Validation Sweep | Write completeness, struct validation, sibling propagation |
 
 **Niche agents** (flag-triggered, 1 budget slot each):
-- EVENT_COMPLETENESS, SEMANTIC_GAP_INVESTIGATOR, SPEC_COMPLIANCE_AUDIT, SIGNATURE_VERIFICATION_AUDIT, SEMANTIC_CONSISTENCY_AUDIT
+- EVENT_COMPLETENESS, SEMANTIC_GAP_INVESTIGATOR, SPEC_COMPLIANCE_AUDIT, SIGNATURE_VERIFICATION_AUDIT, SEMANTIC_CONSISTENCY_AUDIT, MULTI_STEP_OPERATION_SAFETY, CALLBACK_RECEIVER_SAFETY (EVM), DIMENSIONAL_ANALYSIS (EVM)
 
 **Invariant fuzzing** (EVM Thorough only):
 - Foundry invariant fuzz campaign (protocol-derived invariants, 256 runs x depth 25)

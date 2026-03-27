@@ -6,26 +6,28 @@
 |-----------|-------|------|----------|
 | **Target plan** | **Pro** | Max | Max |
 | Agent models | All Sonnet/Haiku | Opus + Sonnet | Opus + Sonnet |
-| Recon | 2 sonnet (no RAG) | 4 agents | 4 agents (full RAG) |
-| Breadth | 2-3 sonnet | 2-7 opus | 2-7 opus |
-| Re-scan (3b/3c) | Skip | Skip | Full (2 iter + per-contract) |
+| Recon | 2 sonnet (no RAG, no fork) | 4 agents (RAG fire-and-forget) | 4 agents (full RAG) |
+| Breadth | 3-4 sonnet | 5-9 opus | 5-9 opus |
+| Re-scan (3b/3c) | Skip | Skip | Full (sonnet, 2 iters + per-contract) |
 | Depth loop | 4 merged sonnet, iter 1 | 8+ agents, iter 1 | Iter 1-3 (Devil's Advocate) |
-| Niche agents | Skip | Flag-triggered | Flag-triggered |
-| Semantic invariants | Skip | Pass 1 | Pass 1 + Pass 2 |
-| Confidence scoring | None (verdicts only) | 2-axis | 4-axis |
-| RAG Sweep | Skip | 1 agent | 1 agent |
-| Invariant / Medusa fuzz | Skip | Skip | Yes (EVM) |
+| Niche agents | Skip | Flag-triggered (up to 8) | Flag-triggered (up to 8) |
+| Semantic invariants | Skip | Pass 1 only | Pass 1 + Pass 2 (recursive trace) |
+| Confidence scoring | None (verdicts only) | 2-axis (Evidence + Quality) | 4-axis (Evidence, Consensus, Quality, RAG) |
+| RAG Sweep | Skip | 1 sonnet | 1 sonnet |
+| Invariant / Medusa fuzz | Skip | Skip | Yes (EVM, zero budget cost) |
+| Design stress testing | Skip | Skip | 1 reserved slot, UNCONDITIONAL |
 | Chain analysis | 1 sonnet (merged) | 2 agents | 2 agents + iteration 2 |
-| Verification (PoC) | Medium+ (sonnet) | Medium+ | ALL severities + fuzz |
+| Verification (PoC) | Chains + ALL Medium+ (sonnet) | Chains + ALL Medium+ | ALL severities (with fuzz) |
 | Skeptic-Judge | Skip | Skip | HIGH/CRIT |
-| Report | 2 agents | 5 agents | 5 agents |
-| Agent count | **~15-18** | ~25-45 | ~35-95 |
+| Cross-batch consistency | Skip | 1 haiku | 1 haiku |
+| Report | 2 agents (sonnet + haiku) | 5 agents (opus + sonnet + haiku) | 5 agents |
+| Agent count | **~18-22** | **~30-50** | **~40-100** |
 
 ## When to Use Each
 
-- **Light**: Pro plan, codebases under 3000 lines, quick first pass. Reports all severities but skips semantic invariants and fuzzing.
-- **Core**: Standard audit. Reports all severities, PoC-verifies Medium+. Best balance of coverage and cost.
-- **Thorough**: Maximum coverage. Iterative depth with Devil's Advocate, fuzz campaigns, skeptic-judge for HIGH/CRIT. Use for high-value or pre-deployment audits.
+- **Light**: Pro plan, codebases under 3000 lines, quick first pass. Reports all severities but skips semantic invariants, fuzzing, and design stress testing.
+- **Core**: Standard audit. Reports all severities, PoC-verifies Medium+, flag-triggered niche agents. Best balance of coverage and cost.
+- **Thorough**: Maximum coverage. Iterative depth with Devil's Advocate, fuzz campaigns (invariant + Medusa), design stress testing, skeptic-judge for HIGH/CRIT, 4-axis confidence scoring. Use for high-value or pre-deployment audits.
 
 ## Proven-Only Mode
 
