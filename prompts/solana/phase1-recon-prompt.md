@@ -454,6 +454,7 @@ Grep in program .rs files (exclude target/, tests/, node_modules/, .anchor/):
 | `migrate\|upgrade\|v2\|deprecated\|legacy` | MIGRATION |
 | `ed25519_program\|Secp256k1\|verify_signature\|Signature\|ed25519_instruction\|Secp256k1Program` | HAS_SIGNATURES |
 | `approve\|delegate\|authorized_amount\|deposit_for\|stake_for\|delegate_to\|_on_behalf\|_for_user\|mint_to(.*target\|transfer(.*target` (public instructions with target address/pubkey parameter writing state for that target) | MULTI_STEP_OPS |
+| CPI targets to known program IDs or named protocol crates: `jupiter\|marinade\|raydium\|orca\|drift\|solend\|marginfi\|mango\|phoenix\|kamino\|tensor\|metaplex\|jito\|spl_stake_pool\|pyth_sdk\|switchboard` (EXCLUDE: anchor_lang, spl_token, solana_program — standard framework crates) | NAMED_EXTERNAL_PROTOCOL |
 
 Write to {SCRATCHPAD}/detected_patterns.md
 
@@ -510,6 +511,7 @@ For EACH recommended template provide: Trigger, Relevance, Instantiation Paramet
 | TEMPORAL_PARAMETER_STALENESS | TEMPORAL flag | {YES/NO} | {temporal patterns with cached params} |
 | ECONOMIC_DESIGN_AUDIT | MONETARY_PARAMETER flag | {YES/NO} | {monetary parameter setters found} |
 | EXTERNAL_PRECONDITION_AUDIT | CPI targets detected | {YES/NO} | {N external CPI targets} |
+| INTEGRATION_HAZARD_RESEARCH | NAMED_EXTERNAL_PROTOCOL flag | {YES/NO} | {if YES: list detected protocols — e.g., "Jupiter, Marinade"} |
 | ORACLE_ANALYSIS | ORACLE flag | {YES/NO} | {Pyth/Switchboard patterns found} |
 | FLASH_LOAN_INTERACTION | FLASH_LOAN flag | {YES/NO} | {flash loan patterns found} |
 | ZERO_STATE_RETURN | Vault/first-depositor | {YES/NO} | {vault pattern found} |
@@ -531,6 +533,7 @@ For EACH recommended template provide: Trigger, Relevance, Instantiation Paramet
 - TEMPORAL flag -> TEMPORAL_PARAMETER_STALENESS **REQUIRED**
 - MONETARY_PARAMETER flag -> ECONOMIC_DESIGN_AUDIT **REQUIRED**
 - CPI targets detected -> EXTERNAL_PRECONDITION_AUDIT **REQUIRED**
+- NAMED_EXTERNAL_PROTOCOL flag detected -> INTEGRATION_HAZARD_RESEARCH **REQUIRED** (injectable into depth-external)
 - ORACLE flag -> ORACLE_ANALYSIS **REQUIRED**
 - FLASH_LOAN flag -> FLASH_LOAN_INTERACTION **REQUIRED**
 - CROSS_CHAIN flag -> CROSS_CHAIN_TIMING **REQUIRED**

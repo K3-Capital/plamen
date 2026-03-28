@@ -129,6 +129,7 @@
 | OUTCOME_DETERMINISM | `outcome_determinism` (finite-pool selection with depletion fallback + time-gated actions with observable default/fallback outcomes). NOTE: callback selective revert and RNG consumption enumeration are now ALWAYS-ON in depth templates, not in this injectable. | Breadth agents, depth-edge-case |
 | LENDING_PROTOCOL_SECURITY | `lending` (liquidate/borrow/repay/collateral/lend/loan/LTV/healthFactor/interestRate/debtToken) | Breadth agents, depth-token-flow, depth-edge-case, depth-state-trace |
 | DEX_INTEGRATION_SECURITY | `dex_integration` (swap/addLiquidity/removeLiquidity/IUniswapV2Router/ISwapRouter/amountOutMin - AND protocol is NOT itself a DEX) | Breadth agents, depth-external, depth-edge-case |
+| INTEGRATION_HAZARD_RESEARCH | `NAMED_EXTERNAL_PROTOCOL` (import/interface for identifiable external protocol — not standard libraries, not the protocol itself) | depth-external |
 
 ### How Injectable Skills Work
 1. Recon Agent classifies protocol type in TASK 0 Step 1

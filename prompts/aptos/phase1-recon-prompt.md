@@ -832,6 +832,7 @@ Grep in .move source files (exclude build/, .aptos/, tests/):
 | `vector::.*length\|table::.*length\|smart_table\|simple_map\|big_vector` | COLLECTION_USAGE |
 | `ed25519::verify\|ed25519::signature_verify_strict\|multi_ed25519\|SignedMessage\|signature::verify\|rotate_authentication_key` | HAS_SIGNATURES |
 | `approve\|delegate\|allowance\|deposit_for\|stake_for\|delegate_to\|_on_behalf\|_for_user\|_for(.*address` (public entry functions with target address parameter writing state for that target) | MULTI_STEP_OPS |
+| External module calls to named protocols in Move.toml deps or use statements: `thala\|echelon\|aries\|liquidswap\|pancakeswap\|tortuga\|amnis\|merkle_trade\|hippo\|aptin\|cellana\|cetus\|pyth\|layerzero\|wormhole` (EXCLUDE: aptos_framework::, aptos_std::, aptos_token::, std:: — standard framework modules) | NAMED_EXTERNAL_PROTOCOL |
 
 Write to {SCRATCHPAD}/detected_patterns.md:
 ```markdown
@@ -954,6 +955,7 @@ For EACH recommended template provide: Trigger, Relevance, Instantiation Paramet
 | TEMPORAL_PARAMETER_STALENESS | TEMPORAL flag | {YES/NO} | {timestamp-based logic with cached parameters} |
 | ECONOMIC_DESIGN_AUDIT | MONETARY_PARAMETER flag | {YES/NO} | {monetary parameter setters found} |
 | EXTERNAL_PRECONDITION_AUDIT | External module calls detected | {YES/NO} | {N external module call sites} |
+| INTEGRATION_HAZARD_RESEARCH | NAMED_EXTERNAL_PROTOCOL flag | {YES/NO} | {if YES: list detected protocols — e.g., "Thala, Liquidswap"} |
 | ORACLE_ANALYSIS | ORACLE flag | {YES/NO} | {Pyth/Switchboard patterns found} |
 | FLASH_LOAN_INTERACTION | FLASH_LOAN flag | {YES/NO} | {flash loan / hot potato patterns found} |
 | ZERO_STATE_RETURN | Vault/first-depositor pattern | {YES/NO} | {vault pattern with share calculation found} |
@@ -976,6 +978,7 @@ For EACH recommended template provide: Trigger, Relevance, Instantiation Paramet
 - TEMPORAL flag detected -> TEMPORAL_PARAMETER_STALENESS **REQUIRED**
 - MONETARY_PARAMETER flag detected -> ECONOMIC_DESIGN_AUDIT **REQUIRED**
 - External module calls detected -> EXTERNAL_PRECONDITION_AUDIT **REQUIRED**
+- NAMED_EXTERNAL_PROTOCOL flag detected -> INTEGRATION_HAZARD_RESEARCH **REQUIRED** (injectable into depth-external)
 - ORACLE flag detected -> ORACLE_ANALYSIS **REQUIRED**
 - FLASH_LOAN flag detected -> FLASH_LOAN_INTERACTION **REQUIRED**
 - CROSS_CHAIN flag detected -> CROSS_CHAIN_TIMING **REQUIRED**

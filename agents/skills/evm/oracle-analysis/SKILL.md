@@ -22,6 +22,8 @@ Enumerate ALL oracle data sources the protocol reads:
 
 **For each oracle**: What decision does the protocol make based on this data? (pricing, liquidation threshold, reward rate, rebase trigger, etc.)
 
+**Hardcoded stablecoin pricing check**: Does the protocol skip oracle lookup for any asset and hardcode its price to a constant (e.g., `1e8` for USDC, `1e18` for DAI)? If yes → FINDING. All assets require dynamic oracle pricing — stablecoins depeg, and hardcoded pricing fails silently when they do. Check: `return 1e8`, `return 1e18`, `price = PRECISION`, or an oracle mapping that excludes specific tokens.
+
 ## 2. Staleness Analysis
 
 For each oracle identified in Step 1:
@@ -55,6 +57,23 @@ For each consumer function, trace the impact of receiving data that is {heartbea
 | `price > 0` validated? | {location} | YES/NO |
 | `updatedAt != 0` validated? | {location} | YES/NO |
 | Sequencer uptime feed checked? (L2 only) | {location} | YES/NO/N/A |
+
+### 2d. Pull-Based Oracle Checks (Pyth, Redstone, etc.)
+
+If the protocol uses a pull-based oracle where users supply price data in the transaction:
+
+**Processing**: ENUMERATE all pull-based oracle update/read sites → PROCESS each against the checks below → verify coverage before proceeding to Section 3.
+
+| Check | Code Reference | Status |
+|-------|---------------|--------|
+| **Timestamp monotonicity**: Does the protocol verify the new update's timestamp >= the previously stored timestamp? | {location} | YES/NO |
+| **Pyth confidence interval**: Is `price.conf` checked relative to `price.price`? (e.g., reject if conf/price > threshold) | {location} | YES/NO |
+| **Pyth price sign**: Is `price.price` validated as > 0? (Pyth returns `int64`) | {location} | YES/NO |
+| **Pyth exponent handling**: Is `price.expo` (typically negative, e.g., -8) correctly applied when converting to protocol decimals? | {location} | YES/NO |
+
+**Timestamp monotonicity attack** (Redstone, Pyth, any pull model): If the protocol stores a price at timestamp T and accepts a later update at timestamp T-Δ (within the allowed staleness window), an attacker can roll back the price. Example: price is $3000 at T=now; attacker updates to $2900 at T=now-3min (within Redstone's 3-min window); borrower is liquidated at the stale-but-accepted price. Defense: `require(newTimestamp >= lastStoredTimestamp)`.
+
+**Pyth confidence interval attack**: Pyth returns price ± confidence bracket. If the protocol uses the raw price without accounting for confidence, it may allow borrowing/liquidation at a price that is up to `conf` away from the true price. Defense: for collateral pricing use `price - conf` (pessimistic), for debt pricing use `price + conf` (pessimistic), always favoring protocol safety over user benefit.
 
 ## 3. Decimal Normalization Audit
 
@@ -168,6 +187,7 @@ Checks:
 2. Is the reference point itself manipulable? (e.g., if deviation checks current vs last-recorded, and last-recorded is admin-settable → admin can set a stale reference that makes all future prices "within deviation")
 3. Can the reference become stale? (e.g., if reference is updated only on specific actions, and those actions stop occurring)
 4. Is the first recorded price special? (no prior reference → deviation check may be bypassed on first update)
+5. **Chained feed deviation stacking**: If the protocol computes a derived price from multiple oracle feeds (e.g., wBTC→BTC→ETH→UNI requires wBTC/BTC + BTC/ETH + UNI/ETH feeds), individual deviation thresholds compound. Sum the maximum deviations across all feeds in the chain to compute total worst-case deviation. If total compounded deviation exceeds the protocol's liquidation margin or LTV buffer → FINDING. Example: 0.5% + 2% + 2% = 4.5% total deviation; if liquidation threshold is only 5% above LTV, the oracle can be 4.5% stale before triggering, leaving <1% real buffer.
 Tag: `[TRACE:deviation check: current vs {reference} → reference source: {X} → manipulable: {Y/N}]`
 
 ## 6. Oracle Failure Modes

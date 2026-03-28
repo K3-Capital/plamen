@@ -251,6 +251,11 @@ For EACH dangerous precondition state, fill the 5-actor-category table. Solana-s
 
 **Pyth pull model**: Price must be updated within the same transaction (or recently) - adds instruction to tx. Check: what if the Pyth update instruction is omitted?
 
+**Additional oracle checks** (cross-chain, apply to all oracle types):
+- **Timestamp monotonicity**: For pull-based oracles where users supply price data, verify new update timestamp >= previously stored timestamp. Without this, an attacker can roll back to an older price within the accepted staleness window.
+- **Chained feed deviation**: If derived prices require multiple feeds (e.g., token_A/SOL via token_A/USD + SOL/USD), sum individual deviation thresholds. If total exceeds liquidation margin → FINDING.
+- **Hardcoded stablecoin pricing**: Does the program skip oracle lookup for any asset and hardcode its price? All assets require dynamic pricing — stablecoins depeg.
+
 ---
 
 ## Rule S1: Account Validation Completeness (Solana-Specific)

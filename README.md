@@ -128,6 +128,7 @@ cd custom-mcp/unified-vuln-db
 python3 -m unified_vuln.indexer index -s solodit --max-pages 10
 python3 -m unified_vuln.indexer index -s defihacklabs
 python3 -m unified_vuln.indexer index -s immunefi
+python3 -m unified_vuln.indexer index -s immunefi-competitions
 cd ../..
 # Note: on Windows use 'python' instead of 'python3'
 
@@ -243,4 +244,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Skills are the most impactful contributi
 - [Farofino](https://github.com/italoag/farofino-mcp) — Aderyn integration
 - [SunWeb3Sec](https://github.com/SunWeb3Sec/DeFiHackLabs) — DeFiHackLabs exploit corpus
 - [Solodit](https://solodit.xyz) — Audit finding database
+- [Immunefi](https://immunefi.com) — Bug bounty & audit competition findings
 - [Anthropic](https://anthropic.com) — Claude Code runtime

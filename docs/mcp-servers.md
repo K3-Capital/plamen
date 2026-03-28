@@ -6,7 +6,7 @@ Plamen uses 9 MCP servers configured in `mcp.json`. All keys are optional -- the
 
 | Server | Purpose | Required? |
 |--------|---------|-----------|
-| **unified-vuln-db** | RAG vulnerability database (Solodit, DeFiHackLabs, Immunefi) | **Required** |
+| **unified-vuln-db** | RAG vulnerability database (Solodit, DeFiHackLabs, Immunefi, Immunefi Competitions) | **Required** |
 | **solana-fender** | Solana program static security analysis | Optional (Solana only) |
 
 ## Submodules (custom-mcp/)
@@ -30,13 +30,13 @@ Plamen uses 9 MCP servers configured in `mcp.json`. All keys are optional -- the
 
 | Key | Where to Get | Cost | Used For |
 |-----|-------------|------|----------|
-| Solodit | [solodit.cyfrin.io](https://solodit.cyfrin.io) | Free | RAG indexing (3400+ findings) + live search |
+| Solodit | [solodit.cyfrin.io](https://solodit.cyfrin.io) | Free | RAG indexing (3400+ findings from Solodit alone, 4k+ total across all sources) + live search |
 | Etherscan | [etherscan.io/apis](https://etherscan.io/apis) | Free | Contract ABI verification |
 | Tavily | [tavily.com](https://tavily.com) | Free tier | Fork ancestry, RAG fallback |
 | Helius | [helius.dev](https://helius.dev) | Free tier | Solana on-chain data |
 | RPC URL | Alchemy, Infura, or public | Free/Paid | Fork testing |
 
-> **Recommended**: Get the free Solodit API key (3400+ findings vs ~700 without) and Tavily key (WebSearch fallback when RAG is slow).
+> **Recommended**: Get the free Solodit API key (4k+ findings with all sources vs ~1.5k without Solodit) and Tavily key (WebSearch fallback when RAG is slow).
 
 ## Configuration Example
 

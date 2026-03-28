@@ -17,7 +17,7 @@ Always-available, triggered by pattern flags from recon. Examples: `ORACLE_ANALY
 
 ### Injectable Skills (protocol-type-specific)
 
-Loaded only when recon classifies the protocol as a matching type. Appended to existing agents (7 total):
+Loaded only when recon classifies the protocol as a matching type. Appended to existing agents (8 total):
 
 | Skill | Trigger |
 |-------|---------|
@@ -28,6 +28,7 @@ Loaded only when recon classifies the protocol as a matching type. Appended to e
 | OUTCOME_DETERMINISM | Finite-pool selection with depletion fallback |
 | LENDING_PROTOCOL_SECURITY | liquidate/borrow/repay/collateral/LTV/healthFactor |
 | DEX_INTEGRATION_SECURITY | swap/addLiquidity/removeLiquidity (non-DEX protocols) |
+| INTEGRATION_HAZARD_RESEARCH | NAMED_EXTERNAL_PROTOCOL flag (named external protocol imports) |
 
 ### Niche Agents (flag-triggered standalone)
 

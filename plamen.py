@@ -1076,6 +1076,14 @@ def _build_rag_db(w):
          f'cd "{vuln_db_dir}" && {nice}{py} -m unified_vuln.indexer index -s immunefi',
          f'cd "{vuln_db_dir}" && {nice}{py} -m unified_vuln.indexer index -s immunefi --skip-fetch',
          indexing_timeout),
+        # Immunefi Competitions: 879 findings from 25 audit competitions via GitHub raw URLs.
+        # No token needed (~50 API calls for directory listing, content via raw.githubusercontent.com).
+        # Retry uses cached markdown files (skip-fetch).
+        ("Immunefi — competitions",
+         "~3 min",
+         f'cd "{vuln_db_dir}" && {nice}{py} -m unified_vuln.indexer index -s immunefi-competitions',
+         f'cd "{vuln_db_dir}" && {nice}{py} -m unified_vuln.indexer index -s immunefi-competitions --skip-fetch',
+         indexing_timeout),
     ]
 
     # Warn the user before the heavy CPU/RAM work begins.
@@ -1122,7 +1130,7 @@ def _setup_python_deps(w):
     py = _python_bin()
     req_files = [
         ("Plamen wrapper", "requirements.txt"),
-        # unified-vuln-db handles all RAG indexing (solodit, defihacklabs, immunefi)
+        # unified-vuln-db handles all RAG indexing (solodit, defihacklabs, immunefi writeups, immunefi competitions)
         # via its own HTTP fetching code — no separate solodit-scraper or
         # defihacklabs-rag packages needed. Those legacy packages are not MCP servers
         # and not called by the current pipeline.

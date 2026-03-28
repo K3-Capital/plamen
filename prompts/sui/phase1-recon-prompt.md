@@ -623,6 +623,7 @@ Grep in .move source files (exclude build/, tests/ directories):
 | `#\[allow(unused\|lint_allow` | SUPPRESSED_WARNING |
 | `ecdsa_k1::secp256k1_verify\|ed25519::ed25519_verify\|ecdsa_r1\|hash::blake2b256\|hmac::hmac_sha3_256` | HAS_SIGNATURES |
 | `approve\|delegate\|allowance\|deposit_for\|stake_for\|delegate_to\|_on_behalf\|_for_user` (public/entry functions with target address parameter writing state for that target) | MULTI_STEP_OPS |
+| External package calls to named protocols in Move.toml deps or use statements: `cetus\|deepbook\|suilend\|navi\|scallop\|turbos\|aftermath\|bucket\|kriya\|flowx\|kai_finance\|haedal\|pyth\|wormhole\|sui_bridge` (EXCLUDE: sui::, sui_framework::, std:: — standard framework modules) | NAMED_EXTERNAL_PROTOCOL |
 
 Write to {SCRATCHPAD}/detected_patterns.md with format:
 ```markdown
@@ -737,6 +738,7 @@ Available conditional templates:
 | TEMPORAL_PARAMETER_STALENESS | TEMPORAL flag | {YES/NO} | {Clock-based operations with cached params} |
 | ECONOMIC_DESIGN_AUDIT | MONETARY_PARAMETER flag | {YES/NO} | {monetary parameter setters found} |
 | EXTERNAL_PRECONDITION_AUDIT | External package calls detected | {YES/NO} | {N external package calls} |
+| INTEGRATION_HAZARD_RESEARCH | NAMED_EXTERNAL_PROTOCOL flag | {YES/NO} | {if YES: list detected protocols — e.g., "Cetus, DeepBook"} |
 | SHARE_ALLOCATION_FAIRNESS | SHARE_ALLOCATION flag | {YES/NO} | {share/allocation patterns} |
 | CROSS_CHAIN_TIMING | CROSS_CHAIN flag | {YES/NO} | {bridge/cross-chain patterns} |
 | MIGRATION_ANALYSIS | MIGRATION or PACKAGE_UPGRADE flag | {YES/NO} | {migration/upgrade patterns} |
@@ -759,6 +761,7 @@ Available conditional templates:
 - TEMPORAL flag -> TEMPORAL_PARAMETER_STALENESS **REQUIRED**
 - MONETARY_PARAMETER flag -> ECONOMIC_DESIGN_AUDIT **REQUIRED**
 - External package calls detected -> EXTERNAL_PRECONDITION_AUDIT **REQUIRED**
+- NAMED_EXTERNAL_PROTOCOL flag detected -> INTEGRATION_HAZARD_RESEARCH **REQUIRED** (injectable into depth-external)
 - SHARE_ALLOCATION flag -> SHARE_ALLOCATION_FAIRNESS **REQUIRED**
 - CROSS_CHAIN flag -> CROSS_CHAIN_TIMING **REQUIRED**
 - MIGRATION or PACKAGE_UPGRADE flag -> MIGRATION_ANALYSIS **REQUIRED**

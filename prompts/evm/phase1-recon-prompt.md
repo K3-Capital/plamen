@@ -273,7 +273,7 @@ Apply `[ELEVATE]` when you observe:
 - Asymmetric branch sizes in profit/loss or deposit/withdraw logic → `[ELEVATE:BRANCH_ASYMMETRY] Verify state completeness in shorter branch (Rule 17)`
 - MULTI_TOKEN_STANDARD detected AND function takes both token address + id parameter → `[ELEVATE:TYPE_DISCRIMINATOR] Verify all token operations in function branch on type, not just the primary one`
 - `initialize()` without `initializer` modifier → `[ELEVATE:REINIT_RISK] Verify reinitialization protection`
-- Assembly blocks (`assembly { }`) → `[ELEVATE:INLINE_ASSEMBLY] Verify memory safety and return data handling in assembly`
+- Assembly blocks (`assembly { }`) → `[ELEVATE:INLINE_ASSEMBLY] Verify memory safety, return data handling, and calldata reads (calldataload at hardcoded offsets) in assembly`
 
 Write `[ELEVATE]` tags directly into the relevant section of `attack_surface.md`.
 
@@ -305,6 +305,7 @@ Grep for these patterns (exclude lib/, test/, mocks/):
 | `lzReceive\|ccipReceive\|receiveWormholeMessages\|_nonblockingLzReceive\|setPeer\|setTrustedRemote\|setTrustedRemoteAddress\|onOFTReceived` | CROSS_CHAIN_MSG |
 | `_safeMint\|safeTransfer\|onERC721Received\|onERC1155Received\|tokensReceived\|onTransferReceived\|onFlashLoan\|executeOperation\|FlashCallback\|beforeSwap\|afterSwap` | OUTCOME_CALLBACK |
 | `depositFor\(\|stakeFor\(\|delegateTo\(\|mintFor\(\|withdrawFor\(\|OnBehalf\(\|claimFor\(\|harvestFor\(\|compoundFor\(` OR (`approve\(\|safeApprove\(\|increaseAllowance\(\|permit\(.*deadline` AND `multicall\|batch\|aggregate\|loop.*approve\|for.*approve`) | MULTI_STEP_OPS |
+| `IUniswapV2Router\|IUniswapV3Pool\|IUniswapV4Pool\|IBalancerVault\|IWeightedPool\|IAToken\|ILendingPool\|IPool\(aave\)\|ICToken\|IComptroller\|ICurvePool\|IStableSwap\|IChainlinkAggregator\|AggregatorV3Interface\|IStETH\|IWstETH\|IContinuousClearingAuction` (EXCLUDE: @openzeppelin generic utilities, solmate, solady — only flag when calling protocol-specific functions) | NAMED_EXTERNAL_PROTOCOL |
 | `.call{value\|.call(\|.delegatecall(` targeting non-hardcoded address after state change | OUTCOME_CALLBACK_LOW_LEVEL |
 | `deadline\|claimPeriod\|default.*selection\|fallback.*assign\|getDefault\|expir` AND time-gated with fallback path | OUTCOME_DELAY |
 
@@ -406,6 +407,7 @@ After listing all recommended templates, output this binding manifest:
 | EXTERNAL_PRECONDITION_AUDIT | External interactions detected | {YES/NO} | {if YES: external contract count} |
 | STORAGE_LAYOUT_SAFETY | STORAGE_LAYOUT flag | {YES/NO} | {if YES: proxy/delegatecall/assembly patterns found} |
 | CROSS_CHAIN_MESSAGE_INTEGRITY | CROSS_CHAIN_MSG flag | {YES/NO} | {if YES: lzReceive/ccipReceive/setPeer patterns found} |
+| INTEGRATION_HAZARD_RESEARCH | NAMED_EXTERNAL_PROTOCOL flag | {YES/NO} | {if YES: list detected protocols — e.g., "Uniswap V3, Chainlink"} |
 
 ### Binding Rules
 - SEMI_TRUSTED_ROLE flag detected → SEMI_TRUSTED_ROLES **REQUIRED**
@@ -423,6 +425,7 @@ After listing all recommended templates, output this binding manifest:
 - ERC4626 flag detected → ZERO_STATE_RETURN **REQUIRED**
 - STORAGE_LAYOUT flag detected → STORAGE_LAYOUT_SAFETY **REQUIRED**
 - CROSS_CHAIN_MSG flag detected → CROSS_CHAIN_MESSAGE_INTEGRITY **REQUIRED**
+- NAMED_EXTERNAL_PROTOCOL flag detected → INTEGRATION_HAZARD_RESEARCH **REQUIRED** (injectable into depth-external)
 - MIXED_DECIMALS flag detected → DIMENSIONAL_ANALYSIS **niche agent** RECOMMENDED (standalone agent, 1 budget slot)
 
 ### Injectable Skills

@@ -40,7 +40,7 @@
 |   +-- solana/                        # 20 Solana skill templates
 |   +-- aptos/                         # 22 Aptos skill templates (21 + core directives)
 |   +-- sui/                           # 22 Sui skill templates (21 + core directives)
-|   +-- injectable/                    # 7 protocol-type-specific skills
+|   +-- injectable/                    # 8 protocol-type-specific skills
 |   +-- niche/                         # 8 flag-triggered niche agents
 |
 +-- custom-mcp/                        # MCP servers

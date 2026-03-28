@@ -23,6 +23,8 @@ Enumerate ALL oracle data sources the protocol reads:
 
 **For each oracle**: What decision does the protocol make based on this data? (pricing, liquidation threshold, reward rate, share price, swap amount, etc.)
 
+**Hardcoded stablecoin pricing**: Does the protocol skip oracle lookup for any asset and hardcode its price (e.g., USDC = 1e8)? All assets require dynamic oracle pricing — stablecoins depeg.
+
 **Sui-specific inventory checks**:
 - Is the oracle data passed as a shared object parameter (`&PriceInfoObject`) or read from on-chain state?
 - Does the protocol use `pyth::price_info::get_price_info_from_price_info_object()` or a wrapper?
@@ -38,6 +40,8 @@ For each oracle identified in Step 1:
 | Oracle | Timestamp Checked? | Max Staleness Enforced? | Staleness Threshold | Clock Source | Appropriate? |
 |--------|-------------------|------------------------|--------------------:|-------------|-------------|
 | {name} | YES/NO | YES/NO | {seconds or NONE} | {clock::timestamp_ms / custom} | {analysis} |
+
+**Chained feed deviation**: If derived prices require multiple feeds (e.g., token_A/USD via token_A/SUI + SUI/USD), sum individual deviation thresholds to compute total worst-case deviation. If total exceeds LTV buffer → FINDING.
 
 **CRITICAL -- Sui uses MILLISECONDS**: `clock::timestamp_ms(clock)` returns milliseconds, not seconds. Pyth's `price.timestamp` returns seconds. If the protocol compares these without unit conversion, the staleness check is 1000x too lenient or too strict. Check for:
 - `publish_time` (seconds from Pyth) vs `clock::timestamp_ms()` (milliseconds) -- MUST convert one to match the other

@@ -29,6 +29,8 @@ Enumerate ALL oracle data sources the protocol reads:
 
 **For each oracle**: What decision does the protocol make based on this data? (pricing, liquidation threshold, reward rate, rebase trigger, collateral valuation, etc.)
 
+**Hardcoded stablecoin pricing**: Does the protocol skip oracle lookup for any asset and hardcode its price (e.g., USDC = 1e8)? All assets require dynamic oracle pricing — stablecoins depeg.
+
 ## 2. Staleness Analysis
 
 For each oracle identified in Step 1:
@@ -41,6 +43,8 @@ For each oracle identified in Step 1:
 
 **Pyth-specific**: Is `price.publish_time` compared against `timestamp::now_seconds()`? What max age is enforced?
 **Switchboard-specific**: Is the aggregator's `latest_confirmed_round.round_open_timestamp` validated?
+
+**Chained feed deviation**: If derived prices require multiple feeds (e.g., token_A/USD via token_A/APT + APT/USD), sum individual deviation thresholds to compute total worst-case deviation. If total exceeds LTV buffer → FINDING.
 
 **If NO staleness check**: What happens when the oracle returns stale data?
 - [ ] Protocol uses stale price for liquidations -- unfair liquidations

@@ -362,6 +362,10 @@ Model BOTH attack types:
 | TWAP window | Window length vs pool liquidity | Short TWAP manipulable via flash loan |
 | Fallback | Behavior on oracle revert | DoS on all oracle-dependent functions |
 | Config bounds | Oracle config setters (window size, deviation, heartbeat) have meaningful min/max | Setter with no floor → deviation check disabled, TWAP window = 0 |
+| Timestamp monotonicity | Pull-based oracles (Pyth, Redstone): new update timestamp >= previous stored timestamp | Price rollback → liquidation at stale price |
+| Confidence interval | Pyth `price.conf` checked; collateral priced at `price - conf`, debt at `price + conf` | Borrow/liquidate at inaccurate price within confidence band |
+| Chained feed deviation | Multi-feed derived prices: sum individual deviations; compare total vs LTV buffer | Phantom solvency, wrongful borrowing within compounded deviation |
+| Hardcoded stablecoin price | No asset priced as a hardcoded constant (1e8, 1e18); all assets use oracle | Depeg event → protocol uses wrong price, bad debt |
 
 **Action**: For every oracle data consumption point, verify ALL applicable checks from the table above. Missing checks → FINDING at severity based on impact. See ORACLE_ANALYSIS skill for full methodology.
 - For every oracle configuration setter (window size, max deviation, heartbeat), check: can the parameter be set to a value that effectively disables the oracle validation? If yes → FINDING (Rule 14 setter regression applies).

@@ -41,7 +41,7 @@ You do **not** need all chain tools. Install only the ones for your target:
 
 ### Optional: RAG vulnerability database
 
-RAG gives the pipeline historical vulnerability pattern matching — it searches a local database of 3400+ past audit findings. The pipeline works without it (falls back to web search), but RAG improves finding quality.
+RAG gives the pipeline historical vulnerability pattern matching — it searches a local database of 4k+ past audit findings (from Solodit, DeFiHackLabs, Immunefi bug bounties, and Immunefi audit competitions). The pipeline works without it (falls back to web search), but RAG improves finding quality.
 
 ```bash
 # Build the RAG database (~10-20 min, CPU intensive)
@@ -57,7 +57,7 @@ Set in `~/.claude/mcp.json` (edit the file, replace `YOUR_*` placeholders):
 
 | Key | What it does | Impact if missing | Get it |
 |-----|-------------|-------------------|--------|
-| `SOLODIT_API_KEY` | Indexes Solodit findings into RAG | RAG database will be smaller (misses 3400+ findings) | [solodit.cyfrin.io](https://solodit.cyfrin.io) (free) |
+| `SOLODIT_API_KEY` | Indexes Solodit findings into RAG | RAG database will be smaller (misses 3400+ Solodit findings) | [solodit.cyfrin.io](https://solodit.cyfrin.io) (free) |
 | `ETHERSCAN_API_KEY` | Fetches verified source code on-chain | No production source verification (EVM only) | [etherscan.io/apis](https://etherscan.io/apis) (free) |
 | `TAVILY_API_KEY` | Web search fallback when RAG fails | Falls back to Claude's built-in web search | [tavily.com](https://tavily.com) (free tier) |
 | `HELIUS_API_KEY` | Solana on-chain data | No Solana account inspection | [helius.dev](https://helius.dev) (free tier) |

@@ -109,6 +109,39 @@ If `tstore`/`tload` used:
 
 Tag: `[BOUNDARY:user_input={MAX} → computed_slot={value} → target={what_gets_overwritten}]`
 
+### 4d. Hardcoded Offset into ABI-Encoded Data
+
+**Processing**: ENUMERATE all `calldataload`/`mload(add(` sites with literal offsets + all byte-slicing with hardcoded N on dynamic-type data → PROCESS each against the criteria below → COVERAGE GATE before moving to Step 5.
+
+**Scope**: Any code that reads from ABI-encoded data using hardcoded byte offsets rather than following offset pointers. This includes:
+- `calldataload(N)` in assembly (raw calldata)
+- `mload(add(data, N))` in assembly (bytes memory/calldata variable)
+- `data[N:]` or `data[N:N+32]` byte-slicing in Solidity with hardcoded N
+- Hardcoded offset arithmetic into nested `bytes` fields after `abi.decode`
+
+Grep: `calldataload\(` with a numeric literal, `mload(add(` with a literal offset on a bytes variable, fixed-offset byte-slicing on decoded `bytes` data.
+
+| Read Site | Mechanism | Offset | Hardcoded? | Into Dynamic-Type Content? | Value Used For | Same Value Read via abi.decode? |
+|-----------|-----------|--------|-----------|---------------------------|----------------|-------------------------------|
+
+**Root cause**: ABI encoding is a convention, not enforced by the EVM. Dynamic types (`bytes`, `string`, `T[]`) use offset pointers — the content can be placed anywhere the pointer says. Hardcoded offsets assume canonical pointer values. A caller can supply non-canonical (but ABI-valid) encoding, making the hardcoded position contain attacker-controlled data instead of the expected field. This applies at every nesting level — top-level calldata, inner `bytes` fields, and nested structs.
+
+**Three impact categories**:
+
+**HIGH/CRITICAL — Dual-read divergence**: Hardcoded-offset read + the same value also read via `abi.decode` or pointer-following elsewhere. The two reads see different values. Enables: authorization bypass (auth sees attacker, execution sees victim), accounting divergence (check validates amount X, transfer uses amount Y).
+
+**MEDIUM — Single-read assumption violation**: Hardcoded-offset read into dynamic-type content, value is security-critical, no dual-read exists but offset pointer is not validated as canonical. The contract reads attacker-controlled data as a trusted field. Latent Critical — any future addition of `abi.decode` on the same data creates dual-read divergence.
+
+**MEDIUM — Revert injection / DoS**: Hardcoded-offset read lands on attacker-controlled data that triggers a revert (zero address, overflow, out-of-bounds). Legitimate calldata (via canonical encoding) would succeed, but attacker-crafted non-canonical encoding causes revert. Enables: griefing specific operations, front-run DoS if attacker can submit a malformed version of a victim's pending transaction.
+
+**MEDIUM — Hash divergence**: Contract hashes raw calldata or portions of it (via assembly `keccak256` over `calldatacopy` or manual packing) for signature verification, deduplication, or identity. Non-canonical encoding produces different hashes for logically identical inputs — or identical hashes for different inputs if overlapping tail pointers are used. Breaks: signature verification, replay protection, UserOp-style identity schemes.
+
+**Do not report if**: The read targets a static-type parameter in the ABI head area (position is fixed regardless of offset pointers), or the value is not security-critical, or the contract validates that the offset pointer equals the expected canonical value before reading.
+
+**Additional note — memory vs calldata decoding inconsistency**: Non-canonical calldata that decodes successfully via `abi.decode` from calldata may fail when the same bytes are copied to memory and re-decoded — the Solidity memory decoder is stricter. Code that copies calldata to memory then decodes should be checked for this asymmetry.
+
+Tag: `[TRACE:hardcoded_read({mechanism}, offset={N}) → dynamic_type_content={YES/NO} → dual_read={YES/NO} → impact={DIVERGENCE/ASSUMPTION/REVERT_DOS/HASH_DIVERGENCE}]`
+
 ---
 
 ## Step 5: Storage Semantic Corruption
@@ -153,4 +186,5 @@ Tag: `[TRACE:delete={op} → auxiliary={state} → updated={YES/NO} → consumer
 | 2. Memory vs Storage Confusion | IF structs/complex types | | Data location of all references |
 | 3. Proxy Storage Layout | IF proxy/upgradeable | | Slot overlap, upgrade continuity |
 | 4. Assembly Storage Safety | IF assembly with sstore/sload | | Slot computation, value encoding |
+| 4d. Hardcoded Offset into ABI Data | IF calldataload/mload at hardcoded offset OR byte-slicing with literal offset on dynamic-type data | | Dual-read divergence, assumption violation, revert injection |
 | 5. Storage Semantic Corruption | IF delete/restructure ops | | Auxiliary state consistency |

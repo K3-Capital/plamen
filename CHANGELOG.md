@@ -5,6 +5,23 @@ All notable changes to Plamen will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.5] - 2026-03-28
+
+### Added
+- **NEW injectable skill: INTEGRATION_HAZARD_RESEARCH** — researches known footguns of external protocols the audited code integrates with. Solodit + Tavily queries per target, hardcoded hazard floor (30 protocols across EVM/Solana/Sui/Aptos), third-party race conditions, integration state TOCTOU. Triggered by `NAMED_EXTERNAL_PROTOCOL` flag. All 4 chain recon prompts updated.
+- **Oracle hardening (all chains)**: EVM oracle skill new Section 2d (pull-based checks — timestamp monotonicity, Pyth confidence intervals), Section 5c item 5 (chained feed deviation stacking), Section 1 (hardcoded stablecoin pricing). Sui/Aptos oracle skills: chained deviation + stablecoin check. Solana/EVM R16: new rows for timestamp monotonicity, confidence interval, chained feed deviation, hardcoded stablecoin price.
+- **Calldata smuggling detection (EVM)**: storage-layout-safety new Step 4d — hardcoded offset into ABI-encoded data. 4 impact tiers (dual-read divergence, single-read assumption, revert injection, hash divergence). Covers calldataload, mload, byte-slicing, nested bytes. Memory vs calldata decoding asymmetry note.
+- **Anchor IDL hidden instructions (Solana)**: account-validation skill IdlBuffer cosplay amplification note. Scanner C new CHECK 8b — 7 hidden IDL instructions, IDL authority claim, IdlCreateBuffer as cosplay primitive.
+- **Silent misconfiguration (all chains)**: Scanner CHECK 2 extended with R14 bounds enforcement + silent misconfiguration sub-check (setter with no bounds that silently produces wrong math).
+- **Immunefi Competitions RAG indexer**: new `immunefi_competitions.py` (984 lines) — 4th indexer alongside Solodit, DeFiHackLabs, Immunefi writeups. Indexes 879 competition-validated findings from 25 audit competitions. Windows-safe, 3 filename formats, 0.2s raw fetch delay. `plamen rag` now runs all 4 indexers. CLI: `--source immunefi-competitions`, `--competitions`, `--max-findings`, `--local-repo`.
+- **Immunefi competition methodology analysis**: 14 agents analyzed 879 findings across 25 competitions — 0 methodology gaps found. Confirms pipeline coverage of all competition-validated vulnerability classes.
+
+### Changed
+- All new skills/checks follow v1.1.2 patterns (processing protocol, coverage assertions) where applicable.
+- unified-vuln-db README rewritten — removed stale HuggingFace source, updated MCP tools table to 16 actual tools, corrected query examples and schema.
+- Documentation updated across 13 files: 4k+ finding count, 8 injectable skills, 4 RAG sources.
+- Raw content fetch delay reduced from 1.0s to 0.2s for raw.githubusercontent.com (no rate limit).
+
 ## [1.1.4] - 2026-03-27
 
 ### Fixed

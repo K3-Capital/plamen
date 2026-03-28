@@ -174,7 +174,7 @@ Works on all platforms. The setup wizard installs via `suiup` (the official Sui 
 
 | Key | Source | Purpose | Required? |
 |-----|--------|---------|-----------|
-| `SOLODIT_API_KEY` | [solodit.cyfrin.io](https://solodit.cyfrin.io) | Index 3400+ audit findings for RAG | Recommended (free) |
+| `SOLODIT_API_KEY` | [solodit.cyfrin.io](https://solodit.cyfrin.io) | Index 3400+ Solodit audit findings for RAG (4k+ total across all sources) | Recommended (free) |
 | `TAVILY_API_KEY` | [tavily.com](https://tavily.com) | Web search fallback for RAG | Optional (free tier) |
 | `ETHERSCAN_API_KEY` | [etherscan.io/apis](https://etherscan.io/apis) | Contract source verification | Optional (free) |
 | `HELIUS_API_KEY` | [helius.dev](https://helius.dev) | Solana on-chain data | Optional (free tier) |

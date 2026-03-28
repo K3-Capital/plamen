@@ -69,7 +69,7 @@ git submodule update --init --recursive
 
 ## Step 2: Set API keys BEFORE installing
 
-The installer builds the RAG vulnerability database during setup. The Solodit source (3400+ audit findings — the largest and most important source) requires an API key. **Set this before running the installer**, otherwise Solodit indexing will be skipped and you'll get a weaker RAG database.
+The installer builds the RAG vulnerability database during setup. The Solodit source (3400+ audit findings — the largest single source) requires an API key. **Set this before running the installer**, otherwise Solodit indexing will be skipped and you'll get a weaker RAG database.
 
 **Add `SOLODIT_API_KEY` to `~/.claude/settings.json`** (the recommended approach — makes the key available to both `plamen rag` and all audit agents):
 

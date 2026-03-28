@@ -39,7 +39,7 @@
 
 ## unified-vuln-db - Your Attack Pattern Library
 
-### Local Database Tools (~3.4k indexed findings)
+### Local Database Tools (~4k+ indexed findings)
 
 | Tool | What It Gives You | When to Use |
 |------|-------------------|-------------|

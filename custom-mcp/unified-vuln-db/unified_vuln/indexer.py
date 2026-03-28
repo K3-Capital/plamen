@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .database import get_db
-from .sources import index_defihacklabs, index_solodit, index_immunefi
+from .sources import index_defihacklabs, index_solodit, index_immunefi, index_immunefi_competitions
 
 console = Console()
 
@@ -21,15 +21,25 @@ def cli():
 
 
 @cli.command()
-@click.option('--source', '-s', type=click.Choice(['all', 'defihacklabs', 'solodit', 'immunefi']),
+@click.option('--source', '-s', type=click.Choice(['all', 'defihacklabs', 'solodit', 'immunefi', 'immunefi-competitions']),
               default='all', help='Data source to index')
 @click.option('--incremental', '-i', is_flag=True, help='Skip existing entries')
 @click.option('--max-pages', default=5, help='Max pages for Solodit scraping')
 @click.option('--max-entries', default=None, type=int, help='Max entries for Immunefi indexing (None = all)')
 @click.option('--skip-fetch', is_flag=True, default=False,
-              help='Immunefi: reuse cached HTTP responses (immunefi_fetched.json) instead of re-fetching URLs. '
-                   'Use on retry after a timeout to skip the ~100s URL-fetch phase and go straight to embedding.')
-def index(source: str, incremental: bool, max_pages: int, max_entries: int, skip_fetch: bool):
+              help='Reuse cached HTTP responses instead of re-fetching URLs. '
+                   'Use on retry after a timeout to skip the fetch phase and go straight to embedding.')
+@click.option('--competitions', default=None, type=str,
+              help='Immunefi competitions: comma-separated list of competition directory names to index '
+                   '(e.g. "Vaultka,Gains"). Only used with --source immunefi-competitions.')
+@click.option('--max-findings', default=None, type=int,
+              help='Immunefi competitions: max findings per competition (None = all).')
+@click.option('--local-repo', default=None, type=str,
+              help='Immunefi competitions: path to local git clone of Past-Audit-Competitions. '
+                   'Avoids all GitHub API calls. Clone with: '
+                   'git clone https://github.com/immunefi-team/Past-Audit-Competitions.git')
+def index(source: str, incremental: bool, max_pages: int, max_entries: int,
+          skip_fetch: bool, competitions: str, max_findings: int, local_repo: str):
     """Index vulnerabilities from data sources."""
     console.print("[bold]Unified Vulnerability Database Indexer[/bold]\n")
 
@@ -49,9 +59,21 @@ def index(source: str, incremental: bool, max_pages: int, max_entries: int, skip
         console.print("\n[bold cyan]═══ Immunefi Bug Bounty Writeups ═══[/bold cyan]")
         count = index_immunefi(max_entries=max_entries, incremental=incremental, skip_fetch=skip_fetch)
         total += count
-    
+
+    if source in ['all', 'immunefi-competitions']:
+        console.print("\n[bold cyan]═══ Immunefi Audit Competitions ═══[/bold cyan]")
+        comp_list = [c.strip() for c in competitions.split(",")] if competitions else None
+        count = index_immunefi_competitions(
+            competitions=comp_list,
+            max_findings_per_competition=max_findings,
+            incremental=incremental,
+            skip_fetch=skip_fetch,
+            local_repo_path=local_repo,
+        )
+        total += count
+
     console.print(f"\n[bold green]Total indexed: {total} vulnerabilities[/bold green]")
-    
+
     # Show stats
     _show_stats(standalone_header=False)
 

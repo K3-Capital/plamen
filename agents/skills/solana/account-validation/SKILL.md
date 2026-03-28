@@ -44,6 +44,8 @@ For all accounts deserialized from raw data:
 **Attack**: Pass an account of Type B where Type A is expected - different data layout, fields interpreted incorrectly.
 **Safe**: Anchor's `Account<T>` checks the 8-byte discriminator. Manual programs must check explicitly.
 
+**Anchor IDL buffer amplification**: If the program uses Anchor with the default IDL feature enabled (check Cargo.toml for `idl-build` feature or absence of `no-idl` — enabled by default), `IdlCreateBuffer` is a permissionless instruction that lets ANYONE create program-owned accounts with nearly arbitrary data at arbitrary lengths. This means a missing discriminator check is exploitable even when no other account type in the program has a suitable layout for cosplay — the attacker crafts one via `IdlCreateBuffer`. When flagging a discriminator bypass: if IDL feature is enabled, severity is NOT mitigated by "no suitable account type exists for substitution."
+
 ## 4. Data Matching (Cross-Account References)
 
 For each cross-account reference (has_one, constraint, seeds):
