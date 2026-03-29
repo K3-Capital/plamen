@@ -1425,7 +1425,22 @@ def _merge_mcp_json(w):
         """Resolve a generic command name to an absolute platform path."""
         if cmd in ("python", "python3"):
             return sys.executable
-        resolved = _find_bin(cmd)
+        # Build extra search dirs: pip --user scripts + sys.executable's dir.
+        # Covers macOS ~/Library/Python/X.Y/bin/, Linux ~/.local/bin/,
+        # Windows %APPDATA%/Python/PythonXY/Scripts/, and venv/conda bins.
+        extra = [os.path.dirname(sys.executable)]
+        try:
+            import sysconfig as _sc
+            for scheme in ("posix_user", "nt_user"):
+                try:
+                    d = _sc.get_path("scripts", scheme)
+                    if d and os.path.isdir(d):
+                        extra.append(d)
+                except KeyError:
+                    pass
+        except Exception:
+            pass
+        resolved = _find_bin(cmd, extra_paths=extra)
         return resolved if resolved else cmd  # keep original if not found
 
     for _name, config in plamen.get("mcpServers", {}).items():
