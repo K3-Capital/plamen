@@ -1217,7 +1217,7 @@ def _setup_python_deps(w):
             deep_ok = True
         except ImportError:
             deep_ok = False
-        w(f"\r  {_C_GREEN}✓{_RST} RAG packages {'found' if deep_ok else 'missing'}              \n")
+        w(f"\r  {_C_GREEN}✓{_RST} RAG packages {'found' if deep_ok else 'missing'}                                        \n")
         sys.stdout.flush()
     else:
         deep_ok = False
