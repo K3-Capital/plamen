@@ -1246,9 +1246,13 @@ def _setup_python_deps(w):
 
 def _setup_config_files(w):
     """Merge Plamen's config into Claude Code's ~/.claude/ (additive, non-destructive)."""
-    _merge_settings_json(w)
-    _merge_mcp_json(w)
-    _merge_claude_md(w)
+    steps = [("settings.json", _merge_settings_json),
+             ("mcp.json",      _merge_mcp_json),
+             ("CLAUDE.md",     _merge_claude_md)]
+    for i, (label, fn) in enumerate(steps, 1):
+        w(f"  {_C_DARK_GRAY}[{i}/{len(steps)}] Merging {label}...{_RST}\n")
+        sys.stdout.flush()
+        fn(w)
     w("\n")
 
 
