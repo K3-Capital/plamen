@@ -644,7 +644,7 @@ mod token {
 |---------------|-------------------|--------|------------------|
 | CVE-2026-26267 (Critical) | soroban-sdk-macros < 22.0.10, < 23.5.2, < 25.1.1 | `#[contractimpl]` generates calls to inherent functions instead of trait functions when names collide — trait security checks silently bypassed | Grep for `impl Trait for Contract` + `impl Contract` with matching fn names |
 | GHSA-96xm-fv9w-pf3f (Moderate) | soroban-sdk < 22.0.9, < 23.5.1, < 25.0.2 | `Bytes::slice`, `Vec::slice`, `Prng::gen_range` overflow when `overflow-checks = false` | Check SDK version + SB4 overflow-checks flag |
-| GHSA-PM4J-7R4Q-CCG8 (Low) | soroban-sdk specific versions | Storage key conversion flag stuck after `Val` to `ScVal` failure — subsequent event emissions fail | Check SDK version |
+| GHSA-PM4J-7R4Q-CCG8 (Low) | soroban-env-host < 26.0.0 | Storage key conversion flag stuck after `Val` to `ScVal` failure — subsequent MuxedAddress conversions fail | Check soroban-env-host version in Cargo.lock |
 
 **Action**: (1) Read SDK version from Cargo.toml/Cargo.lock. (2) If version falls in affected range → flag as finding with upgrade recommendation. (3) For CVE-2026-26267 specifically: grep for any `impl` block on the contract type that defines a function with the same name as a function in a trait `impl` — this is the bypass vector even on patched versions if the code pattern exists.
 

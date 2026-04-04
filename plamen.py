@@ -856,7 +856,7 @@ _INSTALL_RECIPES = {
                             "C:/Program Files/Stellar CLI"]),
          _stellar_cmds,
          ["stellar"], "~2-3 min",
-         ["~/.cargo/bin", "C:/Program Files (x86)/Stellar CLI"], "rust" if sys.platform != "win32" else None),
+         ["~/.cargo/bin", "C:/Program Files/Stellar CLI", "C:/Program Files (x86)/Stellar CLI"], "rust" if sys.platform != "win32" else None),
 
         ("Scout (Soroban static analyzer)",
          lambda: _find_bin("cargo-scout-audit", _CARGO_PATHS),
@@ -911,10 +911,10 @@ def _run_install_cmd(cmd: str, retries: int = 1, timeout: int = None) -> bool:
             result = subprocess.run(cmd, timeout=timeout, **run_kwargs)
             if result.returncode == 0:
                 return True
-            # winget exit codes: 0x8A150019 (-1978335207) = no applicable upgrade,
-            # 0x8A15002B (-1978335189) = package already installed. Both mean the
-            # tool is present on the system — treat as success.
-            if "winget" in cmd and result.returncode in (-1978335207, -1978335189):
+            # winget exit codes that mean the tool is already present:
+            # 0x8A15002B (-1978335189) = UPDATE_NOT_APPLICABLE (no newer version)
+            # 0x8A150061 (-1978335135) = PACKAGE_ALREADY_INSTALLED
+            if "winget" in cmd and result.returncode in (-1978335189, -1978335135):
                 return True
         except subprocess.TimeoutExpired:
             w(f"  {_C_RED}  timed out after {timeout}s{_RST}\n")
@@ -1987,7 +1987,7 @@ def show_hint_panel():
 # ── Helpers ──────────────────────────────────────────────────
 
 # Dirs skipped at ANY depth (build artifacts, tooling, never contain source)
-_SKIP_ALWAYS = {'node_modules', '.git', 'cache', 'artifacts', '.anchor', '.aptos', '.stellar',
+_SKIP_ALWAYS = {'node_modules', '.git', 'cache', 'artifacts', '.anchor', '.aptos', '.stellar', '.soroban',
                 'typechain', 'typechain-types', 'coverage', '__pycache__'}
 # Dirs skipped only at project ROOT level (contain deps/tests/scripts, not source)
 _SKIP_ROOT = {'lib', 'target', 'build', 'out', 'test', 'tests', 'mock', 'mocks',

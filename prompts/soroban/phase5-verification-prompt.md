@@ -82,7 +82,7 @@ Follow `phase5-poc-execution.md`. Compile and run every PoC - a written test wit
 **Soroban commands**:
 - Compile: `stellar contract build` OR `cargo build --target wasm32v1-none --release`
 - Run tests: `cargo test --features testutils` (MUST include `testutils` feature flag)
-- Fuzz: `cargo +nightly fuzz run <target>` (only if nightly toolchain installed); fall back to proptest with bounded inputs or boundary-value parameterized tests
+- Fuzz: `cargo +nightly fuzz run <target>` (only if nightly toolchain installed); on macOS use `cargo +nightly fuzz run --sanitizer=thread <target>` to avoid AddressSanitizer linking errors (see rs-soroban-sdk#1056); fall back to proptest with bounded inputs or boundary-value parameterized tests
 - See PoC framework section below for test structure.
 
 ## ANTI-HALLUCINATION RULES
@@ -120,7 +120,7 @@ These rules prevent the most common Soroban-specific test failures:
 
 5. **Auth mocking**: For tests that should not test auth itself:
    - Mock all auth: `env.mock_all_auths()`
-   - Mock specific auth: `env.mock_auths(&[MockAuth { address: &addr, invoke: &MockAuthInvoke { contract: &id, fn_name: "my_fn", args: args![&env, arg1, arg2].into_val(&env), sub_invocations: &[] } }])`
+   - Mock specific auth: `env.mock_auths(&[MockAuth { address: &addr, invoke: &MockAuthInvoke { contract: &id, fn_name: "my_fn", args: args![&env, arg1, arg2].into_val(&env), sub_invokes: &[] } }])`
 
 6. **Ledger state manipulation**:
    ```rust
@@ -180,13 +180,9 @@ fn test_exploit_missing_auth() {
 
     // 4. SETUP: Create and fund token accounts
     let token_admin = Address::generate(&env);
-    let token_id = env.register(
-        soroban_sdk::testutils::token::StellarAssetContract,
-        (),
-    );
-    let token_admin_client = soroban_sdk::testutils::token::StellarAssetContractClient::new(
-        &env, &token_id
-    );
+    let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_client = token::Client::new(&env, &sac.address());
+    let token_admin_client = token::StellarAssetClient::new(&env, &sac.address());
     token_admin_client.mint(&victim, &1_000_0000000i128); // 7 decimal places
 
     // 5. RECORD BEFORE STATE
@@ -414,7 +410,7 @@ mod proptests {
             client.deposit(&user, &amount);
 
             env.ledger().with_mut(|li| {
-                li.sequence_number += delay_blocks as u64;
+                li.sequence_number += delay_blocks; // sequence_number is u32
             });
 
             // Invariant: withdraw should return same amount deposited (minus fees)
