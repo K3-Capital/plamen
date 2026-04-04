@@ -274,9 +274,10 @@ def _probe_mcp_server(name: str, cmd: str, args: list, cwd: str = None,
                        "capabilities": {},
                        "clientInfo": {"name": "plamen-probe", "version": "1"}}
         })
-        # MCP uses content-length framed messages on stdio
-        header = f"Content-Length: {len(init_msg)}\r\n\r\n"
-        proc.stdin.write(header.encode() + init_msg.encode())
+        # Send raw newline-delimited JSON. Both Python MCP SDK servers (Content-Length
+        # framed) and Node MCP servers (newline-delimited) accept this format for the
+        # health probe. Using Content-Length framing alone fails for tavily/helius.
+        proc.stdin.write(init_msg.encode() + b"\n")
         proc.stdin.flush()
         # Wait for any stdout response (just check it writes back something)
         import select
