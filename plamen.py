@@ -1533,6 +1533,28 @@ def _merge_claude_md(w):
     with open(plamen_md, "r", encoding="utf-8") as f:
         plamen_content = f.read().strip()
 
+    same_file = os.path.realpath(plamen_md) == os.path.realpath(target)
+
+    # If source file already contains markers (same-dir install, or prior install
+    # committed back to repo), extract only the content within markers as the
+    # canonical Plamen instructions. This prevents content doubling/tripling
+    # when PLAMEN_HOME == CLAUDE_HOME.
+    if _CLAUDE_MD_START in plamen_content:
+        start_idx = plamen_content.index(_CLAUDE_MD_START) + len(_CLAUDE_MD_START)
+        if _CLAUDE_MD_END in plamen_content:
+            end_idx = plamen_content.index(_CLAUDE_MD_END)
+        else:
+            end_idx = len(plamen_content)
+        plamen_content = plamen_content[start_idx:end_idx].strip()
+
+    if same_file:
+        # Same-dir install: file is both source and target.
+        # No separate user content to preserve — just write clean markers.
+        with open(target, "w", encoding="utf-8") as f:
+            f.write(f"{_CLAUDE_MD_START}\n{plamen_content}\n{_CLAUDE_MD_END}\n")
+        w(f"  {_C_GREEN}CLAUDE.md: refreshed Plamen instructions (same-dir){_RST}\n")
+        return
+
     existing = ""
     if os.path.isfile(target):
         with open(target, "r", encoding="utf-8") as f:
