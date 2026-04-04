@@ -1174,21 +1174,29 @@ def _setup_python_deps(w):
     ]
 
     # Check if core deps already installed
+    w(f"  {_C_DARK_GRAY}Checking core packages...{_RST}")
+    sys.stdout.flush()
     try:
         import rich, InquirerPy  # noqa: F401
         core_ok = True
     except ImportError:
         core_ok = False
+    w(f"\r  {_C_GREEN}✓{_RST} Core packages {'found' if core_ok else 'missing'}            \n")
+    sys.stdout.flush()
 
     if core_ok:
         # Quick-check: try importing the core RAG deps (what the indexer actually needs).
         # Deliberately avoid `import torch` here — torch cold-start takes 2-3s and would
         # make every `plamen setup` feel sluggish even when deps are already installed.
+        w(f"  {_C_DARK_GRAY}Checking RAG packages (may take a few seconds)...{_RST}")
+        sys.stdout.flush()
         try:
             import sentence_transformers, chromadb  # noqa: F401
             deep_ok = True
         except ImportError:
             deep_ok = False
+        w(f"\r  {_C_GREEN}✓{_RST} RAG packages {'found' if deep_ok else 'missing'}              \n")
+        sys.stdout.flush()
     else:
         deep_ok = False
 
