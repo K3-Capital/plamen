@@ -187,6 +187,7 @@ Rules:
 - Migration function: if the upgrade changes storage structure, a migration function must be called to transform existing data. Verify the migration is atomic with the upgrade or that there is no window where the new code reads old (now-misinterpreted) data.
 - Timelock: is there a delay between announcing an upgrade and applying it? Without a timelock, a compromised admin can upgrade to malicious code without user recourse.
 - **Constructor re-initialization**: After `update_current_contract_wasm`, can the `initialize` (or equivalent) function be called again? If so, can an attacker reset admin/config to attacker-controlled values?
+- **Constructor NON-execution after upgrade (CAP-0058)**: When a contract's code is updated, the `__constructor` is NOT called. If the new WASM expects state initialized by `__constructor` that the old WASM did not have, the new code reads uninitialized storage (`None` / zero). Trace all state variables consumed by the new code — if any are only set in `__constructor` or a new `initialize` function, verify the deployment/migration process explicitly calls the initialization. Uninitialized state can silently break invariants or bypass checks.
 
 ## CHECK 8: Instance Storage Bounds
 For each use of Vec or Map stored in Instance storage:
@@ -199,6 +200,13 @@ Rules:
 - Identify: who can add entries to the Vec/Map? Is it permissionless? Can an attacker add entries at low cost?
 - Calculate: at what approximate entry count does the resource limit become binding? Is that count reachable given the protocol's operation model?
 - Also check: maps used for per-user state stored in Instance storage (should use Persistent storage with per-key TTL instead).
+
+**Persistent storage single-entry growth**: Also check for Vec/Map stored as a SINGLE Persistent storage key that grows with user activity. Even though Persistent storage has no shared size limit, each individual ledger entry has a ~64KB size limit. A single `DataKey::AllUsers` containing a growing `Vec<Address>` will eventually hit this limit. The correct pattern is variable DataKeys (one Persistent entry per user/item), NOT a single entry holding all items.
+
+| Persistent Key | Type (Vec/Map) | Grows With Users? | Entries Before ~64KB | Pattern |
+|---------------|---------------|-------------------|---------------------|---------|
+
+If ANY Persistent entry holds a growing collection with permissionless append → flag as DoS risk (same severity as Instance storage DoS).
 
 **Coverage assertion**: Before returning, verify every entity enumerated under each CHECK has been processed. Report enumerated vs analyzed counts in your return message.
 

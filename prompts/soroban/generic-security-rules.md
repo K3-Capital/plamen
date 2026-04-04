@@ -271,6 +271,7 @@ Any lending protocol on Stellar is a potential flash loan source — no special 
 - **Timestamp monotonicity**: If users or keepers supply price data for pull-based oracles, verify the new update timestamp >= previously stored timestamp. Without this, an attacker can supply an older price within the accepted staleness window.
 - **Hardcoded stablecoin pricing**: Does the contract skip oracle lookup for any asset and hardcode its price? All assets require dynamic pricing — stablecoins depeg.
 - **Chained feed deviation**: If derived prices require multiple feeds (e.g., token/XLM via token/USD + XLM/USD), sum individual deviation thresholds. If total exceeds liquidation margin → FINDING.
+- **Argument order verification**: For every function that receives multiple price/rate values (e.g., live price and TWAP, spot and average, bid and ask), confirm parameters are passed in the correct order to comparison and arithmetic functions. Swapped argument order in a subtraction (e.g., `twap - live` vs `live - twap`) causes underflow and protocol-wide DoS during directional price movement. (Source: Halborn Normal Finance AMM audit — CRITICAL severity from parameter swap.)
 
 ---
 
@@ -631,6 +632,67 @@ mod token {
 | [MOCK] | From mock/test setup | **NO** |
 | [EXT-UNV] | External, unverified | **NO** |
 | [DOC] | From documentation only | **NO** |
+
+---
+
+## Rule SB13: SDK Version Known Vulnerability Cross-Reference
+
+**Pattern**: Any Soroban contract with `soroban-sdk` dependency
+**Check**: Cross-reference the SDK version in Cargo.toml against known CVEs
+
+| CVE / Advisory | Affected Versions | Impact | Detection Pattern |
+|---------------|-------------------|--------|------------------|
+| CVE-2026-26267 (Critical) | soroban-sdk-macros < 22.0.10, < 23.5.2, < 25.1.1 | `#[contractimpl]` generates calls to inherent functions instead of trait functions when names collide — trait security checks silently bypassed | Grep for `impl Trait for Contract` + `impl Contract` with matching fn names |
+| GHSA-96xm-fv9w-pf3f (Moderate) | soroban-sdk < 22.0.9, < 23.5.1, < 25.0.2 | `Bytes::slice`, `Vec::slice`, `Prng::gen_range` overflow when `overflow-checks = false` | Check SDK version + SB4 overflow-checks flag |
+| GHSA-PM4J-7R4Q-CCG8 (Low) | soroban-sdk specific versions | Storage key conversion flag stuck after `Val` to `ScVal` failure — subsequent event emissions fail | Check SDK version |
+
+**Action**: (1) Read SDK version from Cargo.toml/Cargo.lock. (2) If version falls in affected range → flag as finding with upgrade recommendation. (3) For CVE-2026-26267 specifically: grep for any `impl` block on the contract type that defines a function with the same name as a function in a trait `impl` — this is the bypass vector even on patched versions if the code pattern exists.
+
+---
+
+## Rule SB14: Unrestricted Storage Key Derivation
+
+**Pattern**: `env.storage().{type}().set()` where the storage key incorporates user-supplied input
+**Check**: Can a caller control the storage key used in a write operation?
+
+| Risk Pattern | Example | Impact |
+|-------------|---------|--------|
+| User-controlled DataKey variant field | `DataKey::UserData(user_supplied_key)` where key is not validated | Attacker overwrites arbitrary contract state |
+| Direct Address as key without auth | `storage.set(&attacker_address, &value)` without `require_auth(&attacker_address)` | Attacker writes to other users' storage slots |
+| Enum variant collision | Two DataKey variants that serialize to the same bytes | Silent data corruption |
+
+**Action**: For every `env.storage().*.set()` call, trace the key parameter back to its source. If any component of the key is caller-controlled, verify (1) `require_auth` gates the write, (2) the key is bound to the authenticated address, (3) no variant collision is possible.
+
+---
+
+## Rule SB15: Unrestricted transfer_from Source Address
+
+**Pattern**: `token.transfer_from(spender, from, to, amount)` where `from` is caller-supplied
+**Check**: Can the caller specify an arbitrary `from` address in `transfer_from`?
+
+| Risk Pattern | Example | Impact |
+|-------------|---------|--------|
+| User-supplied `from` without validation | `token.transfer_from(&env.current_contract_address(), &user_from, &to, &amount)` | Drain any address that has approved the contract |
+| Allowance not checked against caller | Contract acts as spender for any `from` address | Unauthorized fund transfers |
+
+**Action**: For every `transfer_from` call: (1) verify `from` is either hardcoded or derived from authenticated caller, (2) verify the allowance was granted specifically for this operation, (3) if the contract is the spender, verify it only transfers from addresses that explicitly authorized this specific action via `require_auth`.
+
+---
+
+## Rule SB16: Transaction Footprint Contention Griefing
+
+**Pattern**: Public functions that read/write widely-shared ledger entries
+**Check**: Can an attacker submit cheap transactions that contend with the same footprint, degrading throughput?
+
+Soroban transactions with overlapping footprints (reading/writing the same ledger entries) execute sequentially. An attacker who knows a contract's footprint can flood cheap contending transactions to delay legitimate operations.
+
+| Risk Pattern | Example | Impact |
+|-------------|---------|--------|
+| Global state in hot path | Single Instance storage entry read by every function | All contract calls serialize through one entry |
+| Time-sensitive operations | Liquidation, auction settlement, oracle update | Attacker delays critical operations by contending footprint |
+| Predictable footprint | Contract reads same Persistent entries for every user | Attacker submits min-cost transactions reading same entries |
+
+**Action**: (1) Identify all ledger entries in the contract's read/write footprint for critical functions. (2) If a time-sensitive function shares footprint entries with a permissionless function, flag as griefing risk. (3) Check if the protocol can mitigate via per-user storage keys (reducing shared footprint) or priority fee requirements.
 
 ---
 

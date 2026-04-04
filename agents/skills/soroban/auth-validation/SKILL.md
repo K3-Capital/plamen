@@ -61,6 +61,9 @@ For any contract implementing the `CustomAccountInterface` (contains `__check_au
 - Verify nonce is incremented atomically to prevent replay
 - For multi-sig: verify the threshold check uses `>=` not `>` (off-by-one)
 - Verify `sub_invocations` in the auth tree are validated, not just the top-level call
+- **Sub-invocation auth bypass (host issue #788)**: When contract B calls contract A with different `require_auth` argument sets in the same transaction, a custom auth contract that approves one call may inadvertently authorize both. Verify the `__check_auth` implementation distinguishes between different invocation contexts.
+- **Spending limits**: If the custom account implements spending limits, verify limits are checked BEFORE authorization and decremented atomically. A gap between check and decrement allows multiple calls within one transaction to bypass the limit.
+- **Session keys / delegated auth**: If the custom account supports session keys, verify (1) session key scope is enforced (only authorized functions/amounts), (2) session keys expire, (3) revocation is immediate (not deferred to next transaction)
 
 ## 4. Auth Argument Matching (`require_auth_for_args`)
 
@@ -76,6 +79,7 @@ For any contract implementing the `CustomAccountInterface` (contains `__check_au
 - Does `require_auth_for_args` bind ALL security-critical parameters (amounts, recipients, token addresses)?
 - Are the bound arguments the actual runtime values, not hardcoded or stale values?
 - Is the args tuple in the same order as the function signature (order matters for serialization)?
+- **Determinism requirement**: The mapping between invocation arguments and auth arguments MUST be deterministic. If `require_auth_for_args` computes its argument set from mutable state that could change between the user signing and the transaction executing, the auth can be bypassed or a different operation authorized than what was signed.
 
 ## 5. Missing Auth Patterns
 

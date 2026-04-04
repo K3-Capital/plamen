@@ -75,6 +75,20 @@ Instance storage is shared across ALL instance entries for a contract and has a 
 
 **Estimate growth**: For each unbounded Instance collection, estimate: what is the maximum realistic entry size? How many entries before 64KB is reached? Is that number reachable by a malicious actor?
 
+### 3b. Persistent Storage Single-Entry Growth DoS
+
+Even though Persistent storage has no shared size limit, each individual ledger entry has a ~64KB size limit. A single Persistent key holding a growing collection hits this limit the same way Instance storage does.
+
+| Persistent Key | Data Type | Grows With Users? | Approx Entries Before ~64KB | Permissionless Append? | Risk |
+|---------------|-----------|-------------------|----------------------------|------------------------|------|
+| `{key}` | `{Vec/Map}` | YES/NO | `{estimate}` | YES/NO | HIGH/MED/LOW |
+
+**Dangerous pattern**: `DataKey::AllUsers` → `Vec<Address>` stored as a single Persistent entry. At ~32 bytes per Address, this hits ~64KB at ~2,000 entries.
+
+**Correct pattern**: Variable DataKeys — one Persistent entry per user/item: `DataKey::User(address)` → `UserData`. This distributes data across unlimited entries with no single-entry size constraint.
+
+**Check for**: Any Persistent storage key that stores a collection type (`Vec<T>`, `Map<K,V>`) where the collection grows with protocol usage (new users, new positions, new orders). If the append operation is permissionless or low-cost, flag as DoS risk (same severity as Instance storage DoS).
+
 ## 4. Archival Risk Assessment
 
 Persistent entries that are not extended will eventually be archived by the network. Archived entries can be restored but this requires paying a fee and providing a Merkle proof — not a default user flow.
