@@ -23,6 +23,7 @@ Grep the codebase for known parent Sui package signatures:
 | NAVI | `navi\|navi_protocol\|lending\|pool_manager\|incentive\|StoragePool\|navi_lending` | Lending protocol forks |
 | Scallop | `scallop\|s_coin\|market\|obligation\|borrow_dynamics\|ScallopMarket\|sCoin` | Lending protocol forks |
 | Turbos | `turbos\|pool_factory\|position_manager\|turbos_clmm\|TurbosPool\|TurbosPosition` | Concentrated liquidity forks |
+| Curve StableSwap | `stable_swap\|stableswap\|get_d\|get_y\|ramp_a\|stop_ramp_a\|A_PRECISION\|RATE_MULTIPLIER\|calc_withdraw_one_coin\|remove_liquidity_imbalance\|get_virtual_price\|admin_fee` | StableSwap AMM forks — **set STABLESWAP_FORK flag if MEDIUM+ confidence** |
 | DeepBook | `deepbook\|clob\|order_book\|custodian\|deep_book\|DeepBookPool\|BalanceManager` | Order book DEX forks |
 | Aftermath | `aftermath\|af_lp\|pool_registry\|amm_v2\|AftermathPool\|StakedSui` | AMM / liquid staking forks |
 | Bucket | `bucket\|bucket_protocol\|tank\|well\|fountain\|BucketProtocol\|BUCK` | Stablecoin / CDP forks |
@@ -149,6 +150,7 @@ Compare fork vs parent in security-critical paths:
 
 #### Other Divergence Areas
 - Modified mathematical formulas (fee calculations, exchange rates, reward distribution)
+- **Parameter semantic verification**: When the parent has a mathematical specification, verify that each core parameter carries the same mathematical meaning in the fork — not just the same name and numeric range. Forks may store a raw value where the parent stores a derived form (e.g., raw coefficient vs. coefficient scaled by a function of pool dimensions). Compare the fork's formula usage against the parent's specification to confirm the encoding convention matches.
 - Changed access control (added/removed capabilities, modified authority checks)
 - Removed safety checks (assertions removed, constraints removed)
 - Changed struct layouts (fields reordered, types changed, new fields added)

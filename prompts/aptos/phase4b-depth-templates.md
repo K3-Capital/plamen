@@ -76,6 +76,8 @@ For EVERY finding you analyze or produce, you MUST apply at least 2 of these 3 t
 
    Aptos examples: `[TRACE:dispatchable_hook->reentrancy->stale state at L120]`, `[TRACE:move_from->exists check->false->abort]`, `[TRACE:coin::withdraw->balance 0->INSUFFICIENT_BALANCE abort]`, `[TRACE:flash_borrow->receipt not consumed->cannot drop->tx abort]`
 
+4. **Root-Cause Regression**: When a finding's impact VARIES across inputs (different thresholds per token type, different timing per parameter value, different severity per state), trace backward: WHY does it vary? Follow the variance source until you reach a missing normalization, a hardcoded assumption, or an external dependency. The variance is the symptom — what causes it is the root cause. Tag: `[REGRESS:symptom→cause]`.
+
 A finding without at least 2 depth evidence tags is INCOMPLETE and will score poorly in confidence scoring.
 
 ## EXPLOITATION TRACE MANDATE
@@ -89,6 +91,16 @@ For each finding you CONFIRM at Medium+ severity, you MUST:
 4. If the claim contradicts a documented implication and you cannot demonstrate with concrete code evidence why the invariant is insufficient or broken, downgrade to CONTESTED with the contradiction noted
 
 This is a HARD GATE that applies to every Medium+ finding. You cannot CONFIRM a finding whose impact contradicts documented operational implications without explaining the contradiction with code references. "Looks suspicious" is not sufficient for CONFIRMED — trace the actual state to prove the harm.
+
+## ANCHORING REJECTION LIST
+Before marking REFUTED/CONTESTED, verify you are NOT relying on these insufficient rationalizations. If you are → upgrade to CONTESTED or complete the evidence trace:
+- "Formula appears correct" → prove with boundary substitution, don't describe
+- "Standard/known pattern" → standard patterns carry standard bugs; verify invariants at THIS call site
+- "Tests pass" → tests miss boundary values and non-standard tokens; check what they don't cover
+- "By design" → mechanism ≠ impact; trace terminal user consequence before closing
+- "Unlikely to be exploited" → address with code evidence, not intuition; likelihood belongs to the severity matrix
+- "Only internal accounting" → trace if consumed for transfers, mints, liquidations, or redemptions
+- "All tokens use N decimals" → verify per-token; custom tokens may use different decimals
 
 ## PART 1: GAP-TARGETED DEEP ANALYSIS (PRIMARY -- 80% effort)
 
@@ -109,7 +121,9 @@ Also read {SCRATCHPAD}/attack_surface.md and check for UNANALYZED attack vectors
 4. **Coin-to-FA accounting parity**: If the protocol handles both Coin<T> (legacy) and FungibleAsset (new standard), are the accounting paths equivalent? Can conversion between standards cause precision loss or accounting mismatch?
 5. **Unsolicited transfer gaps**: For each token type -- was unsolicited transfer analyzed? Can `primary_fungible_store::deposit(addr, fa)` or `coin::deposit(addr, coin)` inflate balances the protocol relies on?
 
-6. **Rule application gaps**: Check if these rules were systematically applied:
+6. **Claim idempotency**: For each reward/fee claim function — verify the state marker preventing re-claiming is updated BEFORE the transfer. Can the same epoch/period be accumulated into claimable amount twice via any call sequence? Tag: `[TRACE:claim→state_reset→transfer vs claim→transfer→state_reset]`
+
+7. **Rule application gaps**: Check if these rules were systematically applied:
    - Rule 8 (Cached Parameters): Were ALL multi-step flows checked for parameter staleness (including cross-module external state)?
    - Rule 9 (Stranded Assets): Were ALL asset types verified to have exit paths? Specifically: resource accounts without stored SignerCapability, FungibleStores without withdraw functions, Objects without DeleteRef?
    - Rule 2 (Griefable Preconditions): Were ALL functions with manipulable preconditions checked (admin AND permissionless)? Were resource creation front-running and FungibleStore donation vectors checked?

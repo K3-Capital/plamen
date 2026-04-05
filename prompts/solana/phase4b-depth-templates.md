@@ -34,6 +34,8 @@ Your domain scope (Solana-specific):
 2. **Parameter Variation**: `[VARIATION:bump 255→254 → different PDA address]`, `[VARIATION:mint Token→Token-2022 → transfer fee applied]`, `[VARIATION:decimals 9→0 → precision loss]`
 3. **Trace to Termination**: `[TRACE:CPI→reload skipped→stale balance at L120]`, `[TRACE:close→refund→revival with zeroed data]`, `[TRACE:init ordering A before B→B reads zero state]`. **Nested call resolution**: When tracing an extraction path through an inner call (e.g., CPI, callback), also trace what happens when control returns to the OUTER calling instruction - does it perform a post-execution state check (balance comparison, total delta, require/assert) that atomically reverts the entire transaction if the extraction exceeds bounds? If yes, the extraction is bounded by that outer check, not by the inner mechanism alone. **CPI/callback exit path**: For each CPI or callback that can return control to caller, analyze BOTH: (a) state mutation during the CPI (stale data on return), AND (b) selective execution - can the callee ERROR/ABORT to reject unwanted outcomes while the caller retries until a desired outcome is achieved? Pattern: mint CPI → callback checks assigned type → abort if undesirable → retry until rare type.
 
+4. **Root-Cause Regression**: When a finding's impact VARIES across inputs (different thresholds per token type, different timing per parameter value, different severity per state), trace backward: WHY does it vary? Follow the variance source until you reach a missing normalization, a hardcoded assumption, or an external dependency. The variance is the symptom — what causes it is the root cause. Tag: `[REGRESS:symptom→cause]`.
+
 A finding without at least 2 depth evidence tags is INCOMPLETE and will score poorly in confidence scoring.
 
 ## EXPLOITATION TRACE MANDATE
@@ -47,6 +49,16 @@ For each finding you CONFIRM at Medium+ severity, you MUST:
 4. If the claim contradicts a documented implication and you cannot demonstrate with concrete code evidence why the invariant is insufficient or broken, downgrade to CONTESTED with the contradiction noted
 
 This is a HARD GATE that applies to every Medium+ finding. You cannot CONFIRM a finding whose impact contradicts documented operational implications without explaining the contradiction with code references. "Looks suspicious" is not sufficient for CONFIRMED — trace the actual state to prove the harm.
+
+## ANCHORING REJECTION LIST
+Before marking REFUTED/CONTESTED, verify you are NOT relying on these insufficient rationalizations. If you are → upgrade to CONTESTED or complete the evidence trace:
+- "Formula appears correct" → prove with boundary substitution, don't describe
+- "Standard/known pattern" → standard patterns carry standard bugs; verify invariants at THIS call site
+- "Tests pass" → tests miss boundary values and non-standard tokens; check what they don't cover
+- "By design" → mechanism ≠ impact; trace terminal user consequence before closing
+- "Unlikely to be exploited" → address with code evidence, not intuition; likelihood belongs to the severity matrix
+- "Only internal accounting" → trace if consumed for transfers, mints, liquidations, or redemptions
+- "All tokens use N decimals" → verify per-token; custom tokens may use different decimals
 
 ## PART 1: GAP-TARGETED DEEP ANALYSIS (PRIMARY - 80% effort)
 
@@ -65,6 +77,7 @@ Also read {SCRATCHPAD}/attack_surface.md and check for UNANALYZED attack vectors
 2. **Token-2022 extension impact**: For each mint that could be Token-2022 - were transfer fees, transfer hooks, confidential transfers traced through protocol accounting?
 3. **SOL lamport donation**: Can direct SOL transfers to program-owned accounts affect any balance checks or rent calculations?
 4. **Vault share accounting**: Does `total_deposited` track actual token account balance or internal accounting? Can they desync?
+5. **Claim idempotency**: For each reward/fee claim instruction — verify the state marker preventing re-claiming is updated BEFORE the transfer. Can the same epoch/period be accumulated into claimable amount twice via any instruction sequence? Tag: `[TRACE:claim→state_reset→transfer vs claim→transfer→state_reset]`
 
 ### Edge Case Agent - Cross-Language Checks
 - **Initializer timestamp dilution**: For programs with time-weighted calculations (fees, vesting, rewards), check if the anchor timestamp is set to `Clock::get().unix_timestamp` at initialization. If the program is initialized significantly BEFORE it becomes active, the first time-weighted calculation uses a `timeDelta` spanning the entire dormant period. Trace: `initialize` sets `last_update = clock.unix_timestamp` → program sits idle for N seconds → first user action triggers `time_delta = N` → accelerated accrual. Check: is there a separate `activate` instruction or first-deposit guard that resets the timestamp?

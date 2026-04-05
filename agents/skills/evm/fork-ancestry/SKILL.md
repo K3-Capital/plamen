@@ -21,7 +21,7 @@ Grep the codebase for known parent signatures:
 | Uniswap V3 | `UniswapV3\|TickMath\|SqrtPriceMath\|NonfungiblePositionManager` | Concentrated liquidity forks |
 | Aave | `aToken\|LendingPool\|flashLoan.*initiator\|AAVE` | Lending forks |
 | MasterChef | `MasterChef\|poolInfo\|userInfo\|pendingReward\|massUpdatePools` | Yield farming forks |
-| Curve | `StableSwap\|get_dy\|A_PRECISION\|get_virtual_price` | Stableswap forks |
+| Curve | `StableSwap\|get_dy\|A_PRECISION\|get_virtual_price\|ramp_A\|stop_ramp_A\|calc_withdraw_one_coin\|remove_liquidity_imbalance\|admin_fee\|commit_new_fee` | Stableswap forks — **set STABLESWAP_FORK flag if MEDIUM+ confidence** |
 | OpenZeppelin | `Ownable\|AccessControl\|Pausable\|ERC20Upgradeable` | Most projects (check version) |
 | Basis/Tomb | `Boardroom\|Treasury\|seigniorage\|epoch\|TWAP.*peg` | Algorithmic stablecoin forks |
 | Olympus | `OHM\|gOHM\|staking.*rebase\|bond.*discount` | Rebase token forks |
@@ -110,6 +110,7 @@ Compare fork vs parent in security-critical paths:
 Focus on:
 - Modified access control (added/removed roles, changed modifiers)
 - Changed mathematical formulas (fee calculations, exchange rates, reward distribution)
+- **Parameter semantic verification**: When the parent has a mathematical specification, verify that each core parameter carries the same mathematical meaning in the fork — not just the same name and numeric range. Forks may store a raw value where the parent stores a derived form (e.g., raw coefficient vs. coefficient scaled by a function of pool dimensions). Compare the fork's formula usage against the parent's specification to confirm the encoding convention matches.
 - Added external dependencies (new oracles, new tokens, new protocols)
 - Removed safety checks (validation removed, guard removed)
 - Changed state variable types or visibility

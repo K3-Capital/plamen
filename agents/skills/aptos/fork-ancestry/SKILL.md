@@ -20,6 +20,7 @@ Grep the codebase for known parent signatures:
 | Aries | `aries\|aries_market\|margin_trade\|aries_profile` | Margin trading forks |
 | Aptos Framework Staking | `delegation_pool\|stake_pool\|validator_set\|staking_config` | Delegation/staking forks |
 | Liquidswap | `liquidswap\|curves\|liquidity_pool\|coin_helper\|lp_coin` | DEX forks (Pontem) |
+| Curve StableSwap | `stable_swap\|stableswap\|get_d\|get_y\|ramp_a\|stop_ramp_a\|A_PRECISION\|RATE_MULTIPLIER\|calc_withdraw_one_coin\|remove_liquidity_imbalance\|get_virtual_price\|admin_fee\|pontem_stable` | StableSwap AMM forks — **set STABLESWAP_FORK flag if MEDIUM+ confidence** |
 | Pancakeswap | `pancake\|masterchef\|smart_router\|pancakeswap\|cake_token` | Yield farming forks |
 | Amnis Finance | `amnis\|amnis_staking\|amapt\|stapt\|amnis_router` | Liquid staking forks |
 | Cellana Finance | `cellana\|ve_token\|gauge\|voter\|bribe` | ve(3,3) / gauge forks |
@@ -113,6 +114,7 @@ Compare fork vs parent in security-critical paths:
 Focus on:
 - Modified access control (changed signer requirements, added/removed friend declarations)
 - Changed mathematical formulas (fee calculations, exchange rates, reward distribution)
+- **Parameter semantic verification**: When the parent has a mathematical specification, verify that each core parameter carries the same mathematical meaning in the fork — not just the same name and numeric range. Forks may store a raw value where the parent stores a derived form (e.g., raw coefficient vs. coefficient scaled by a function of pool dimensions). Compare the fork's formula usage against the parent's specification to confirm the encoding convention matches.
 - Added external dependencies (new oracles, new CPI targets, new coin types)
 - Removed safety checks (assertions removed, type constraints relaxed)
 - Changed Ref storage patterns (different access control on stored MintRef/BurnRef/TransferRef)
