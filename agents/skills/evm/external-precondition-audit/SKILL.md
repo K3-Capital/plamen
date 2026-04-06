@@ -30,6 +30,8 @@ and common patterns for that function type. Example: `IVault.swap(FundManagement
 For each return value: what happens if it returns 0? What happens if it returns MAX?
 What happens if the external call reverts?
 
+- For each external data structure received (Vec, array, Map, list): (a) What ordering/uniqueness does the consuming code assume? (b) Does the external contract's spec guarantee that ordering? (c) What happens if the assumption is violated (unsorted, duplicates, gaps)?
+
 ## 3. State Dependency Mapping
 
 | Protocol State | Depends on External State | External State Can Change Without Our Knowledge? |

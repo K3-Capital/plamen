@@ -246,6 +246,11 @@ Use finding IDs: [PC{N}-1], [PC{N}-2]...
 Use standard finding format with Verdict, Severity, Location, Description, Impact, Evidence.
 Maximum 5 findings per agent - prioritize by severity.
 
+## File Coverage Checkpoint (MANDATORY)
+Before writing findings, list EVERY source file in your cluster and confirm you opened it:
+| File | Lines | Opened? | Functions Analyzed |
+If any file shows Opened: NO — open and analyze it before returning.
+
 ## Quality Gate
 Every finding MUST include a specific code location (file:line). Findings without code references will be discarded.
 Do NOT re-report findings from the exclusion list.

@@ -37,6 +37,7 @@ For each return value:
 - For `Option<T>` returns: does our protocol handle `none` correctly?
 - For `FungibleAsset` returns: is metadata validated after receiving?
 - For `Object<T>` returns: is the object type verified before use?
+- For each external data structure received (Vec, array, Map, list): (a) What ordering/uniqueness does the consuming code assume? (b) Does the external contract's spec guarantee that ordering? (c) What happens if the assumption is violated (unsorted, duplicates, gaps)?
 
 ## 3. State Dependency Mapping
 

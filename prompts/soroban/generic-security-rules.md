@@ -696,6 +696,21 @@ Soroban transactions with overlapping footprints (reading/writing the same ledge
 
 ---
 
+## Rule SB17: Transaction Resource Budget Exhaustion (Soroban-Specific)
+
+**Pattern**: Functions that loop over user-controlled collections (reserves, positions, collateral types, oracle feeds)
+**Check**: Can a user grow their position across enough entries that a single transaction exceeds Stellar's per-transaction resource limits (~40 read ledger entries, CPU/memory budgets)?
+
+| Risk Pattern | Example | Impact |
+|-------------|---------|--------|
+| Liquidation iterates all user reserves | User deposits/borrows across N assets → liquidation reads N×(reserve + oracle + token) entries | Liquidation reverts on resource limit → user immune to liquidation → bad debt |
+| Account position loops over all reserves | Health factor check reads every enabled reserve | Borrow/withdraw reverts when user has too many reserves enabled |
+| Oracle queries per asset | Each reserve requires oracle price → TWAP reads multiple price records | N reserves × M price records per feed exceeds read budget |
+
+**Action**: (1) For each function with a user-reserve loop, compute: `max_reads = reserves_in_position × reads_per_reserve`. (2) Compare against Stellar's resource limits. (3) If `max_reads` can exceed the limit under user control → flag as LIQUIDATION_RESOURCE_DOS. (4) Check if the protocol enforces a max-reserves-per-user cap that keeps the budget within limits.
+
+---
+
 ## Enforcement Mechanisms
 
 ### Devil's Advocate FORCING

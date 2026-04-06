@@ -74,11 +74,13 @@ The Stellar Asset Contract (SAC) wraps Stellar classic XLM and issued assets as 
 | Classic Stellar operations affecting SAC balance not reflected in Soroban state | YES/NO | `{fn:line or NONE}` |
 | Clawback feature of issued assets handled | YES/NO | `{fn:line or NONE}` |
 | Issuer authorization revocation handled | YES/NO | `{fn:line or NONE}` |
+| Token address permanence (classic re-issuance / migration) | YES/NO | `{fn:line or NONE}` |
 
 **SAC-specific risks**:
 - **Trust line authorization**: A classic Stellar account can have its trust line for an asset revoked by the issuer. After revocation, `transfer` to that account fails silently or panics. Contracts that assume all transfers succeed need to handle this.
 - **Clawback**: Some Stellar assets have clawback enabled. An issuer can call `clawback` to reduce a Soroban contract's balance without any Soroban transaction. This means a contract's `balance()` can decrease between two Soroban transactions with no on-Soroban event.
 - **Balance source of truth**: SAC reads balances from the underlying Stellar ledger state. If a classic operation changes the balance, the Soroban contract sees the new balance immediately — this can break invariants if the contract caches balances.
+- **Token address permanence**: On Stellar, classic assets can be re-issued or migrated, changing their effective on-chain identity. Contracts that derive storage keys, registry lookups, or deployment salts from token addresses may become unreachable if a token's address changes. Verify whether token address references can be updated or if the protocol documents this as a known limitation.
 
 ## 5. Balance Verification
 

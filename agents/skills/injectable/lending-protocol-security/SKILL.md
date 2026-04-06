@@ -45,12 +45,11 @@ Substitute boundary values into the formula:
 ### 1b. Check-to-Execution Consistency
 - Between HF check and liquidation execution: can any state change (oracle update, interest accrual, collateral deposit) alter the HF?
 - If a user's borrow increases their debt: is HF re-checked atomically or can they borrow below HF=1.0?
-- Can a user borrow, then in the same transaction, remove collateral before the HF check?
+- Grep every exit-path (withdraw, transfer, finalize_transfer) for the SAME health predicate used at borrow entry. If a DIFFERENT or WEAKER predicate is used on any exit-path, document both predicate names and flag the asymmetry.
 
 ### 1c. Dust Position Economics
-- What is the minimum borrow size? Is it enforced at creation AND after partial repayment?
-- For positions where remaining debt < gas cost of liquidation: is there a mechanism to handle them? (minimum borrow, dust threshold, protocol liquidation)
-- Can a borrower deliberately create a dust position to avoid liquidation?
+- Grep deposit/borrow entry points for minimum amount/value checks (min_borrow, min_deposit, require amount >= X). If NONE found → document "NO_MINIMUM_POSITION" as a finding: attackers can Sybil-create dust positions that cost more to liquidate than they're worth, accumulating bad debt.
+- If a minimum exists at creation: grep partial-repay path for the same check. If missing → dust positions can be created by repaying down to near-zero.
 
 Tag: `[BOUNDARY:HF={value} → liquidatable={YES/NO} → operator={>=/>}]`
 
@@ -146,9 +145,8 @@ Tag: `[TRACE:liquidate(amount={X}) → bonus={Y} → seized_collateral={Z} → r
 - Is there a fallback path (escrow, protocol seizure) for blocklisted positions?
 
 ### Gas Bounds
-- If liquidation iterates over the borrower's assets: is the iteration bounded?
-- Can a borrower with many small collateral positions make liquidation exceed block gas limit?
-- Are there maximum asset count limits per position?
+- Count max storage reads per liquidation call: (reserves_in_position × oracle_reads_per_reserve × token_ops_per_reserve). Compare against chain's per-transaction resource limit (EVM: block gas; Stellar: ~40 read ledger entries; Solana: CU budget). If a user controlling N reserves can exceed the limit → document "LIQUIDATION_RESOURCE_DOS".
+- Grep for maximum asset/reserve count limits enforced at deposit/borrow entry. If none → users can grow positions until liquidation is physically impossible.
 
 ### Reentrancy Guard Conflicts
 - If liquidation acquires a reentrancy lock: do any internal calls (token transfers, oracle reads) also require the same lock?
@@ -218,9 +216,7 @@ Check for these specific asymmetric pause states:
 - **Liquidation paused, interest active**: Underwater positions grow worse with no resolution
 
 ### 5c. Post-Unpause Grace Period
-- After unpausing: is there a delay before liquidations can execute?
-- If no delay: positions that became liquidatable during pause are immediately seized upon unpause
-- Is there a mechanism to let borrowers repay before liquidators act? (repay-first window)
+- Grep for grace_period/cooldown/delay/repay_window near unpause/set_pause logic. If NONE found → document "NO_UNPAUSE_GRACE": positions that became liquidatable during pause are seized immediately upon unpause with no user recourse.
 
 Tag: `[TRACE:pause(repay) → interest_accrues={YES/NO} → liquidation_active={YES/NO} → borrower_recourse={YES/NO}]`
 
@@ -238,7 +234,7 @@ Tag: `[TRACE:pause(repay) → interest_accrues={YES/NO} → liquidation_active={
 ### 6b. Stale Oracle Impact on Liquidation
 - If the oracle returns a stale price: can liquidation proceed with outdated prices?
 - If a staleness check reverts: does liquidation revert too? (stale oracle = liquidation DoS)
-- Is there a fallback oracle for liquidation-critical price feeds?
+- Grep for fallback/backup/secondary/chainlink_fallback near oracle/price logic. If NONE found → document "NO_FALLBACK_ORACLE": single oracle failure = liquidation DoS for all positions using that price feed.
 
 ### 6c. Self-Liquidation via Oracle Manipulation
 - Can a borrower manipulate the oracle to inflate their collateral value, borrow maximum, then let the oracle correct?

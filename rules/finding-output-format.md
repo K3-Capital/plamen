@@ -83,3 +83,4 @@ Used by depth agents and iteration 2+ agents:
 | `[TRACE:path→outcome]` | Agent traced execution to a terminal state (revert, return, state change) | `[TRACE:withdraw(maxUint)→revert at L120 "insufficient"]` |
 | `[MEDUSA-PASS]` | Medusa fuzzer found a counterexample violating an invariant - mechanical proof (same weight as `[POC-PASS]`) | `[MEDUSA-PASS: fuzz_totalSupplyInvariant violated after 3-call sequence]` |
 | `[CROSS-DOMAIN-DEP: {domain}]` | Agent identified an assumption outside its own domain that could enable exploitation if broken | `[CROSS-DOMAIN-DEP: external — assumes oracle price is fresh within 1 hour]` |
+| `[REGRESS:symptom→cause]` | Agent traced a varying symptom backward to its architectural root cause | `[REGRESS:overflow threshold varies by decimals→missing decimal normalization]` |

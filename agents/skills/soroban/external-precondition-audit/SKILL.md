@@ -67,6 +67,7 @@ For each return value:
 - What happens if it returns an unexpected type? (Soroban SDK will trap on deserialization mismatch)
 - What happens if `try_invoke_contract` returns `Err`? Does the protocol handle this case explicitly?
 - Are return values deserialized with a type assertion that could trap on malformed data from an upgraded contract?
+- For each external data structure received (Vec, array, Map, list): (a) What ordering/uniqueness does the consuming code assume? (b) Does the external contract's spec guarantee that ordering? (c) What happens if the assumption is violated (unsorted, duplicates, gaps)?
 
 ## 4. State Dependency Mapping
 

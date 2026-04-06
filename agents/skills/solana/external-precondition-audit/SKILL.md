@@ -79,6 +79,8 @@ For each return value:
 
 **Solana-specific**: `sol_get_return_data` returns the program ID that set the data. Verify the caller checks that the return data comes from the expected program, not a previously-invoked program's stale return data.
 
+- For each external data structure received (Vec, array, Map, list): (a) What ordering/uniqueness does the consuming code assume? (b) Does the external contract's spec guarantee that ordering? (c) What happens if the assumption is violated (unsorted, duplicates, gaps)?
+
 ## 5. State Dependency Mapping
 
 | Protocol State | Depends on CPI Target State | External State Can Change Without Our Knowledge? |
