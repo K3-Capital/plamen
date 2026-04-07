@@ -816,17 +816,41 @@ The orchestrator runs the full loop autonomously:
 
 6. **Design Stress Testing (Thorough mode only)**: ALWAYS spawn Design Stress Testing Agent. 1 slot is pre-reserved and UNCONDITIONAL — not a "budget redirect." This agent runs regardless of remaining budget.
 
-### THOROUGH CHECKPOINT: Post-Depth (orchestrator inline)
+### THOROUGH CHECKPOINT: Post-Depth (orchestrator inline — STATIC MANIFEST CHECK)
+
+**Do NOT write checkpoint assertions from memory.** Read the static manifest and verify against it:
 
 ```
-ASSERT: confidence_scores.md exists AND is non-empty
-ASSERT: adaptive_loop_log.md exists (records iteration count and exit reason)
-ASSERT: phase4b_manifest.md exists (compaction-resilient manifest)
+// STEP 1: Read the static manifest (orchestrator MUST NOT modify this file)
+manifest = Read("~/.claude/prompts/{LANGUAGE}/phase4b-required-artifacts.md")
+
+// STEP 2: Check EVERY required artifact exists
+missing = []
+for each file in manifest.required_artifacts_table:
+    if not exists({SCRATCHPAD}/{file}):
+        missing.append({file, producer})
+
+// STEP 3: Check niche agent artifacts
+for each niche agent marked Required: YES in {SCRATCHPAD}/template_recommendations.md:
+    if not exists({SCRATCHPAD}/{niche_file}):
+        missing.append({niche_file, niche_agent_name})
+
+// STEP 4: If missing → spawn, do NOT proceed
+if len(missing) > 0:
+    LOG to {SCRATCHPAD}/violations.md: "PHASE 4b INCOMPLETE: {missing}"
+    for each missing file:
+        spawn the responsible agent (see Producer column in manifest)
+    re-run STEP 2 after agents complete
+    ASSERT len(missing) == 0 — HARD GATE, cannot proceed to Phase 4c
+
+// STEP 5: Standard assertions
+ASSERT: confidence_scores.md is non-empty
 ASSERT: IF uncertain Medium+ findings exist after iter 1 → adaptive_loop_log shows iter >= 2
+
 LOG checkpoint result to {SCRATCHPAD}/checkpoint_postdepth.md
 ```
 
-If any assertion fails, log to `{SCRATCHPAD}/violations.md` before proceeding.
+**WHY STATIC MANIFEST**: The orchestrator previously wrote its own checkpoint — verifying only what it remembered to do, silently skipping what it forgot. The static manifest file is defined outside the orchestrator's generation context. Missing artifacts trigger agent spawns, not silent passes.
 
 ### Phase 4b.5: RAG Validation Sweep (MANDATORY for Core/Thorough)
 

@@ -109,6 +109,7 @@ let user_share = (user_balance * total_rewards) / total_supply;
 - Division by zero: verify all divisors are checked for zero before use. `require!(total_supply > 0)` before `x / total_supply`
 - Rounding direction: does truncation favor the protocol (rounding down on user withdrawals) or systematically favor attackers?
 - Precision constants: verify `PRECISION` / `SCALAR` constants match the token decimals being used
+- Intermediate type precision: if the protocol routes values through a fixed-point intermediate (e.g., FixedI128 with DENOMINATOR=10^N), verify N >= max(token_decimals) for all supported tokens. Double decimal conversion (token A decimals → intermediate → token B decimals) truncates at each step; if the intermediate has fewer precision digits than either token, significant value is silently lost
 
 ## Finding Template
 

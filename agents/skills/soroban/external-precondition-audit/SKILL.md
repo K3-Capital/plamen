@@ -88,6 +88,7 @@ For each dependency: model what happens when the external contract state changes
 
 Checks:
 1. Is the price/rate value validated for bounds before use (not zero, not negative, not impossibly large)?
+1b. Price magnitude bounds: does the protocol enforce an upper bound or deviation check on price values? If no circuit breaker exists (e.g., reject price if >N× previous price or a configured ceiling), flag the absence — extreme-but-positive prices from oracle glitches or flash crashes pass the zero/negative check but can still cause mass liquidation or inflated borrowing.
 2. Is staleness enforced? (compare oracle's `timestamp` field against `env.ledger().timestamp()` with max age)
 3. Can the oracle address be substituted by an attacker (see Section 1)?
 4. What happens if the oracle contract's storage entry has expired (returns default value)?
