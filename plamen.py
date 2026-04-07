@@ -1267,20 +1267,47 @@ def _setup_python_deps(w):
 
 
 def _setup_mcp_packages(w):
-    """Install pinned MCP npm packages and update ~/.claude.json to use them."""
+    """Install pinned MCP npm packages and update config to use them.
+
+    This only activates when mcp-packages/node_modules already exists (user opted in)
+    or when ~/.claude.json has bare 'npx -y @pkg' without version pins (legacy config).
+    New users get correctly pinned npx commands from mcp.json.example and don't need this.
+    """
     mcp_dir = os.path.join(PLAMEN_HOME, "mcp-packages")
     pkg_json = os.path.join(mcp_dir, "package.json")
     update_script = os.path.join(mcp_dir, "update_config.py")
+    nm_dir = os.path.join(mcp_dir, "node_modules")
 
     if not os.path.isfile(pkg_json):
-        w(f"  {_C_GRAY}  mcp-packages/package.json not found — skipping{_RST}\n")
-        return
+        return  # mcp-packages not part of this install — skip silently
+
+    # Only activate if: (a) node_modules already exists (user previously opted in), or
+    # (b) ~/.claude.json has bare npx -y without version pins (legacy config needing fix)
+    has_local_install = os.path.isdir(nm_dir)
+    has_legacy_config = False
+    claude_json = os.path.join(os.path.expanduser("~"), ".claude.json")
+    if os.path.isfile(claude_json):
+        try:
+            with open(claude_json) as f:
+                cj = _json.load(f)
+            for _name, srv in cj.get("mcpServers", {}).items():
+                args_str = " ".join(srv.get("args", []))
+                # Bare "npx -y @pkg" without @version is legacy
+                if "npx" in args_str and "-y" in args_str and "@" in args_str:
+                    import re
+                    if re.search(r"@[\w./-]+(?!@)", args_str):
+                        # Has package name but no @version suffix
+                        has_legacy_config = True
+                        break
+        except Exception:
+            pass
+
+    if not has_local_install and not has_legacy_config:
+        return  # New user with correct config from mcp.json.example — nothing to do
 
     # Step 1: npm install (only if node_modules missing or package.json newer)
-    nm_dir = os.path.join(mcp_dir, "node_modules")
-    needs_install = not os.path.isdir(nm_dir)
+    needs_install = not has_local_install
     if not needs_install:
-        # Check if package.json is newer than node_modules
         try:
             needs_install = os.path.getmtime(pkg_json) > os.path.getmtime(nm_dir)
         except OSError:
@@ -1305,9 +1332,9 @@ def _setup_mcp_packages(w):
         w(f"  {_C_GREEN}✓{_RST} MCP packages up to date\n")
 
     # Step 2: Update ~/.claude.json to use pinned paths + schema sanitizer
-    if os.path.isfile(update_script):
-        python_bin = sys.executable
-        r = subprocess.run([python_bin, update_script], capture_output=True, text=True, timeout=30)
+    if os.path.isfile(update_script) and has_local_install:
+        r = subprocess.run([sys.executable, update_script],
+                           capture_output=True, text=True, timeout=30)
         if r.returncode == 0:
             w(f"  {_C_GREEN}✓{_RST} MCP server config updated (pinned + sanitized)\n")
         else:
