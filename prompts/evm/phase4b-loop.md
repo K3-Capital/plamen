@@ -30,7 +30,8 @@ ADAPTIVE_DEPTH_LOOP(findings_inventory):
   effective_floor = max(depth_floor, iter1_fixed + iter23_reserve)
   max_depth_spawns = min(max(effective_floor, ceil(total_findings / 5) + 7), hard_cap)  // dynamic cap
   dst_reserved = 1  // Design Stress Testing always gets 1 slot
-  depth_available = max_depth_spawns - dst_reserved  // depth agents share the rest
+  perturbation_reserved = 1 if MODE == THOROUGH else 0  // Finding Perturbation Agent (Thorough only)
+  depth_available = max_depth_spawns - dst_reserved - perturbation_reserved  // depth agents share the rest
   max_findings_per_agent = 5  // anti-dilution rule AD-3
   depth_spawns_used = 0
 
@@ -170,6 +171,24 @@ ADAPTIVE_DEPTH_LOOP(findings_inventory):
   //   depth-external: findings tagged external, oracle, cross-chain, CPI/cross-module
   // Write domain-filtered views to {SCRATCHPAD}/depth_input_{domain}.md (max 15 findings each)
   // Depth agents read their filtered view instead of full findings_inventory.md
+
+  // ═══ SYMMETRIC OPERATION PAIRING (Thorough only) ═══
+  // Pre-compute symmetric operation pairs from function_list.md and inject into
+  // depth agent prompts. Removes discovery burden — agents verify both sides of
+  // each pair mechanically instead of reasoning about which pairs exist.
+  // Evidence: AdverTest (2026), Meta mutation-guided test gen (FSE 2025).
+  if MODE == THOROUGH:
+    // Orchestrator or haiku agent reads function_list.md, identifies pairs:
+    // deposit/withdraw, borrow/repay, mint/burn, stake/unstake, lock/unlock,
+    // approve/revoke, enable/disable, pause/unpause, add/remove
+    // Writes compact table (~10-15 lines) to {SCRATCHPAD}/symmetric_pairs.md:
+    //   | Pair # | Positive Op | Negative Op | Shared State Variables |
+    // This table is injected at the END of each depth agent's prompt with directive:
+    //   "For EACH pair, you MUST analyze BOTH operations. A finding about one side
+    //    WITHOUT analysis of the other is INCOMPLETE. Include in your output:
+    //    | Pair # | Positive Analyzed? | Negative Analyzed? | Both Rounding? | Both Boundary? |"
+    symmetric_pairs = extract_symmetric_pairs(SCRATCHPAD + "/function_list.md")
+    write(SCRATCHPAD + "/symmetric_pairs.md", symmetric_pairs)
 
   // ═══ INJECTABLE INVESTIGATION AGENTS ═══
   // If an injectable skill was loaded, spawn dedicated sonnet agents for each domain

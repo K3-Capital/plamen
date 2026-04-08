@@ -15,7 +15,7 @@
       "command": "python",
       "args": ["-m", "unified_vuln.server"],
       "cwd": "./custom-mcp/unified-vuln-db",
-      "_comment": "Required: RAG vulnerability database. Run 'plamen rag' to populate (uses all-MiniLM-L6-v2)"
+      "_comment": "MCP server for vulnerability research. RAG database is optional — run 'plamen rag' to populate (pipeline works without it)"
     },
     "farofino": {
       "command": "python",
