@@ -247,6 +247,18 @@ def generate_config_toml(out_dir: Path) -> None:
 # Generator: agents/*.toml
 # ---------------------------------------------------------------------------
 
+# Shared platform awareness directive injected into all agent roles.
+# Recon has a custom version (includes MCP timeout); all others use this.
+PLATFORM_DIRECTIVE = (
+    "PLATFORM: On Windows (PowerShell), translate bash commands from methodology:\n"
+    "- grep/rg -> Get-ChildItem -Recurse | Select-String\n"
+    "- find -> Get-ChildItem -Recurse -Filter\n"
+    "- cat -> Get-Content; wc -l -> (Get-Content file).Count\n"
+    "- Do NOT use fc, glob **/*.sol, or Set-Content -NoNewline\n"
+    "- If git commands fail, skip and note \"not a git repo\""
+)
+
+
 # Role definitions: (filename, name, description, developer_instructions)
 AGENT_ROLES = [
     {
@@ -266,6 +278,16 @@ AGENT_ROLES = [
             - Agent 3 (Patterns/Surface/Templates): TASK 4, 5, 6, 7, 10
 
             Execute ONLY the tasks assigned to you by the orchestrator.
+
+            PLATFORM: The methodology templates contain bash commands. On Windows
+            (PowerShell), translate them:
+            - grep/rg -> Get-ChildItem -Recurse | Select-String
+            - find -> Get-ChildItem -Recurse -Filter
+            - wc -l -> (Get-Content file).Count
+            - cat -> Get-Content
+            - Do NOT use fc (collides with Format-Custom), glob patterns like **/*.sol,
+              or Set-Content -NoNewline
+            - If git commands fail (not a git repo), skip them and note "not a git repo"
 
             When an MCP tool call returns a timeout error or fails, do NOT retry.
             Record [MCP: TIMEOUT] and skip ALL remaining calls to that provider.
@@ -288,6 +310,8 @@ AGENT_ROLES = [
 
             Write to {SCRATCHPAD}/analysis_{N}.md
 
+            """ + PLATFORM_DIRECTIVE + """
+
             SCOPE: Write ONLY to your assigned output file. Do NOT read or write
             other agents' output files. Do NOT proceed to subsequent pipeline phases.
             Return your findings and stop."""),
@@ -303,6 +327,9 @@ AGENT_ROLES = [
             ~/.codex/plamen/agents/skills/{LANGUAGE}/token-flow-tracing/SKILL.md
 
             Write findings to {SCRATCHPAD}/depth_token_flow_findings.md only.
+
+            """ + PLATFORM_DIRECTIVE + """
+
             Do NOT proceed to subsequent pipeline phases."""),
     },
     {
@@ -315,6 +342,9 @@ AGENT_ROLES = [
             ~/.codex/plamen/agents/depth-state-trace.md
 
             Write findings to {SCRATCHPAD}/depth_state_trace_findings.md only.
+
+            """ + PLATFORM_DIRECTIVE + """
+
             Do NOT proceed to subsequent pipeline phases."""),
     },
     {
@@ -328,6 +358,9 @@ AGENT_ROLES = [
             ~/.codex/plamen/agents/skills/{LANGUAGE}/zero-state-return/SKILL.md
 
             Write findings to {SCRATCHPAD}/depth_edge_case_findings.md only.
+
+            """ + PLATFORM_DIRECTIVE + """
+
             Do NOT proceed to subsequent pipeline phases."""),
     },
     {
@@ -340,6 +373,9 @@ AGENT_ROLES = [
             ~/.codex/plamen/agents/depth-external.md
 
             Write findings to {SCRATCHPAD}/depth_external_findings.md only.
+
+            """ + PLATFORM_DIRECTIVE + """
+
             Do NOT proceed to subsequent pipeline phases."""),
     },
     {
@@ -355,6 +391,8 @@ AGENT_ROLES = [
             Write findings to {SCRATCHPAD}/blind_spot_{type}_findings.md
             or {SCRATCHPAD}/validation_sweep_findings.md.
 
+            """ + PLATFORM_DIRECTIVE + """
+
             SCOPE: Write ONLY to your assigned output files. Do NOT proceed to
             subsequent pipeline phases. Return your findings and stop."""),
     },
@@ -369,6 +407,8 @@ AGENT_ROLES = [
 
             Consolidate all breadth findings into a single inventory.
             Write to {SCRATCHPAD}/findings_inventory.md.
+
+            """ + PLATFORM_DIRECTIVE + """
 
             SCOPE: Write ONLY to your assigned output file. Do NOT proceed to
             subsequent pipeline phases. Return your summary and stop."""),
@@ -386,6 +426,8 @@ AGENT_ROLES = [
             Write to {SCRATCHPAD}/hypotheses.md, {SCRATCHPAD}/finding_mapping.md,
             {SCRATCHPAD}/synthesis_full.md, {SCRATCHPAD}/chain_hypotheses.md.
 
+            """ + PLATFORM_DIRECTIVE + """
+
             SCOPE: Write ONLY to your assigned output files. Do NOT proceed to
             subsequent pipeline phases. Return your summary and stop."""),
     },
@@ -402,6 +444,8 @@ AGENT_ROLES = [
 
             Write and execute PoC tests for each assigned hypothesis.
             Write results to {SCRATCHPAD}/verify_{batch}.md.
+
+            """ + PLATFORM_DIRECTIVE + """
 
             SCOPE: Write ONLY to your assigned output file. Do NOT proceed to
             subsequent pipeline phases. Return your verdicts and stop."""),
@@ -421,6 +465,8 @@ AGENT_ROLES = [
             Focus on vulnerability classes that attention saturation typically masks.
 
             Write to {SCRATCHPAD}/analysis_rescan_{N}.md
+
+            """ + PLATFORM_DIRECTIVE + """
 
             SCOPE: Write ONLY to your assigned output file. Do NOT read or write
             other agents' output files. Do NOT proceed to subsequent pipeline phases.
@@ -443,6 +489,8 @@ AGENT_ROLES = [
 
             Write to {SCRATCHPAD}/analysis_percontract_{N}.md
 
+            """ + PLATFORM_DIRECTIVE + """
+
             SCOPE: Write ONLY to your assigned output file. Do NOT proceed to
             subsequent pipeline phases. Return your findings and stop."""),
     },
@@ -460,6 +508,8 @@ AGENT_ROLES = [
             access control boundaries, temporal ordering requirements.
 
             Write to {SCRATCHPAD}/semantic_invariants.md
+
+            """ + PLATFORM_DIRECTIVE + """
 
             SCOPE: Write ONLY to your assigned output file. Do NOT proceed to
             subsequent pipeline phases. Return your invariants and stop."""),
@@ -481,6 +531,8 @@ AGENT_ROLES = [
             Read: findings_inventory.md, consensus_map.md, rag_validation.md
             Write to {SCRATCHPAD}/confidence_scores.md
 
+            """ + PLATFORM_DIRECTIVE + """
+
             SCOPE: Write ONLY to your assigned output file. Return scores and stop."""),
     },
     {
@@ -501,6 +553,8 @@ AGENT_ROLES = [
             record floor score (0.3).
 
             Write to {SCRATCHPAD}/rag_validation.md
+
+            """ + PLATFORM_DIRECTIVE + """
 
             SCOPE: Write ONLY to your assigned output file. Return validation
             results and stop."""),
@@ -536,6 +590,8 @@ AGENT_ROLES = [
 
             If no mapped filename is provided, use: {SCRATCHPAD}/niche_{SKILL_NAME_LOWER}_findings.md
 
+            """ + PLATFORM_DIRECTIVE + """
+
             SCOPE: Write ONLY to your assigned output file. Do NOT proceed to
             subsequent pipeline phases. Return your findings and stop."""),
     },
@@ -555,6 +611,8 @@ AGENT_ROLES = [
             and verify completeness.
 
             Write to {SCRATCHPAD}/report_index.md
+
+            """ + PLATFORM_DIRECTIVE + """
 
             SCOPE: Write ONLY to your assigned output file. Return index summary
             and stop."""),
@@ -576,6 +634,8 @@ AGENT_ROLES = [
 
             Write to {SCRATCHPAD}/report_{TIER}.md
 
+            """ + PLATFORM_DIRECTIVE + """
+
             SCOPE: Write ONLY to your assigned output file. Return your finding
             count and stop."""),
     },
@@ -594,6 +654,8 @@ AGENT_ROLES = [
             2. Add priority remediation order
             3. Run quality checks (finding count, no internal IDs, valid cross-refs)
             4. Write report_quality.md with check results
+
+            """ + PLATFORM_DIRECTIVE + """
 
             Write the final report to {PROJECT_ROOT}/AUDIT_REPORT.md
             Write quality check to {SCRATCHPAD}/report_quality.md"""),
@@ -614,6 +676,8 @@ AGENT_ROLES = [
             3. Write Medium findings (report_medium.md)
             4. Write Low+Info findings (report_low_info.md)
             5. Assemble final AUDIT_REPORT.md
+
+            """ + PLATFORM_DIRECTIVE + """
 
             Write the final report to {PROJECT_ROOT}/AUDIT_REPORT.md."""),
     },

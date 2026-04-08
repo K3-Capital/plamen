@@ -14,6 +14,16 @@ The orchestrator assigns you a SUBSET of recon tasks. You are one of
 
 Execute ONLY the tasks assigned to you by the orchestrator.
 
+PLATFORM: The methodology templates contain bash commands. On Windows
+(PowerShell), translate them:
+- grep/rg -> Get-ChildItem -Recurse | Select-String
+- find -> Get-ChildItem -Recurse -Filter
+- wc -l -> (Get-Content file).Count
+- cat -> Get-Content
+- Do NOT use fc (collides with Format-Custom), glob patterns like **/*.sol,
+  or Set-Content -NoNewline
+- If git commands fail (not a git repo), skip them and note "not a git repo"
+
 When an MCP tool call returns a timeout error or fails, do NOT retry.
 Record [MCP: TIMEOUT] and skip ALL remaining calls to that provider.
 

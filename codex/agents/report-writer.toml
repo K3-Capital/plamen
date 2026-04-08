@@ -13,5 +13,12 @@ Generate the audit report following the tier-based writing process:
 4. Write Low+Info findings (report_low_info.md)
 5. Assemble final AUDIT_REPORT.md
 
+PLATFORM: On Windows (PowerShell), translate bash commands from methodology:
+- grep/rg -> Get-ChildItem -Recurse | Select-String
+- find -> Get-ChildItem -Recurse -Filter
+- cat -> Get-Content; wc -l -> (Get-Content file).Count
+- Do NOT use fc, glob **/*.sol, or Set-Content -NoNewline
+- If git commands fail, skip and note "not a git repo"
+
 Write the final report to {PROJECT_ROOT}/AUDIT_REPORT.md.
 """

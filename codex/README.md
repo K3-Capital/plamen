@@ -61,37 +61,26 @@ agent definitions), regenerate the Codex files:
 python scripts/codex_adapter.py
 ```
 
-## Pilot Status (v1.1.8)
+## Current Limitations
 
-**Phase 1 integration proven.** A real Light-mode audit on Codex CLI got through
-bootstrap → recon → breadth, spawned sub-agents, and produced a real finding.
-
-### What Works
-- Config loading (model, sandbox, approval, agent roles)
-- AGENTS.md and shared methodology tree readable
-- Watchdog initialization and artifact-based grace period
-- EVM/Foundry language detection
-- Sub-agent spawning for breadth analysis
-- Real findings produced by breadth agents
-
-### Known Issues (Phase 2)
-- **Windows command compat**: Shared prompt templates use Unix-style commands
-  (`rg`, `grep`, glob patterns like `src/**/*.sol`) that fail on Windows Codex
-  (PowerShell). Need a Windows compatibility pass across recon/breadth templates.
-- **Thread cap**: Codex defaults to 8 concurrent agents (`max_threads`). Light mode
-  spawns 3-4 breadth agents plus recon, which is within budget, but Core/Thorough
-  will exceed it. Need agent budgeting to respect the cap.
-- **Non-git repos**: Some recon steps assume a git repository (`git rev-list`,
-  `git log`). Need guards when `git rev-parse` fails.
-- **Shell alias collisions**: `fc` collides with PowerShell `Format-Custom`.
-  `Set-Content -NoNewline` unsupported in some contexts.
-
-### Current Limitations
-- **Generator**: Most adapter content is templated, not fully manifest-derived.
-  MCP servers and hooks are manifest-driven; AGENTS.md, SKILL.md, and agent
-  instructions are templated. Must re-run generator after Claude-side changes.
-- **Context window**: Codex uses ~200K context vs Claude's 1M. Deep analysis
-  agents may need prompt condensation for complex codebases.
-- **Thorough mode**: Experimental. See Mode Support Status in `skills/plamen/SKILL.md`.
-- **Model**: Default is `gpt-5.3-codex`. Change in `config.toml` to match your
-  account (run `codex --available-models` to check).
+- **Phase 1 generator**: Most adapter output content is templated, not fully
+  derived from Claude-side manifests. MCP servers (from mcp.json.example),
+  hooks (from phase_manifest.json), and agent role file lists (from
+  agents/depth-*.md) are manifest-driven. AGENTS.md orchestrator rules,
+  SKILL.md phase sequence, and agent developer_instructions are templated
+  and must be updated manually when Claude-side files change. Phase 2 goal
+  is to derive more content from CLAUDE.md and commands/plamen.md parsing.
+- **Model**: Codex uses `o3` (200K context) vs Claude Code's Opus (1M context).
+  Thorough mode may require more careful context management.
+- **Thorough mode parity**: Several Thorough-only features are experimental or
+  not yet implemented on Codex. See the Mode Support Status table in
+  `skills/plamen/SKILL.md` for details. Skeptic-Judge, invariant fuzz,
+  Medusa fuzz, and finding perturbation are not yet available.
+- **MCP servers**: All servers are mapped but may need manual API key configuration
+  in `config.toml` (replace `YOUR_*_API_KEY` placeholders).
+- **Hooks**: Codex hook format may differ from Claude Code. The `hooks.json` file
+  adapts the phase_gate.py script but event names may need adjustment for your
+  Codex version. The `phase_gate.py --track-write` handler supports both
+  Claude Code and Codex payload formats.
+- **Platform**: Generated configs assume macOS/Linux (`python3`, forward slashes).
+  Windows users should use WSL or adjust paths manually.

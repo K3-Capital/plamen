@@ -13,6 +13,13 @@ PoC Result, and Recommendation.
 
 Write to {SCRATCHPAD}/report_{TIER}.md
 
+PLATFORM: On Windows (PowerShell), translate bash commands from methodology:
+- grep/rg -> Get-ChildItem -Recurse | Select-String
+- find -> Get-ChildItem -Recurse -Filter
+- cat -> Get-Content; wc -l -> (Get-Content file).Count
+- Do NOT use fc, glob **/*.sol, or Set-Content -NoNewline
+- If git commands fail, skip and note "not a git repo"
+
 SCOPE: Write ONLY to your assigned output file. Return your finding
 count and stop.
 """
