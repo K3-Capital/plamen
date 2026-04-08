@@ -3,9 +3,15 @@
 #   API accounts:       "o3", "o4-mini"
 #   ChatGPT Plus/Pro:   run `codex --available-models` for supported models
 #   Common alternatives: "gpt-4.1", "o4-mini"
+# Model: change to match your account (run `codex --available-models`)
 model = "o3"
 model_context_window = 200000
 approval_mode = "full-auto"
+
+# Sandbox: "full-access" needed for audits — reads methodology from ~/.codex/,
+# runs toolchain commands (forge, cargo, stellar), writes to .scratchpad/.
+# Our command_guard.py PreToolUse hook handles dangerous command blocking.
+sandbox_mode = "full-access"
 
 [agents]
 max_threads = 8
