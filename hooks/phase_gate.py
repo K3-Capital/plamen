@@ -647,14 +647,16 @@ def cmd_stop():
         save_json_file(state_path, state)
         sys.exit(0)
 
-    # Startup grace period: if no artifacts have been written yet (write_count == 0)
-    # and we're within 120 seconds of init, only warn — never block.
-    # This prevents blocking during the planning phase (language detection,
-    # prompt reading, agent composition) before recon agents are even spawned.
-    init_time = state.get("initialized_at", 0)
-    write_count = state.get("write_count", 0)
-    elapsed_since_init = time.time() - init_time if init_time else 999
-    in_grace_period = write_count == 0 and elapsed_since_init < 120
+    # Startup grace: never block until at least 1 audit artifact exists in scratchpad.
+    # Time-based grace (120s) was too fragile — Codex planning can take longer.
+    # Artifact-based grace is robust: once the first .md file appears (from any
+    # recon agent), enforcement activates. Until then, only warn.
+    try:
+        scratchpad_files = [f for f in os.listdir(scratchpad)
+                           if f.endswith(".md") and f != STATE_FILENAME]
+    except (IOError, OSError):
+        scratchpad_files = []
+    in_grace_period = len(scratchpad_files) == 0
 
     # Load manifest
     manifest = load_json_file(MANIFEST_PATH)
@@ -723,10 +725,10 @@ def cmd_stop():
             # The orchestrator is still planning (reading prompts, detecting
             # language, composing agent prompts) before spawning recon agents.
             warn_msg = (
-                "[Watchdog] Startup grace period ({:.0f}s/{:.0f}s). "
+                "[Watchdog] No artifacts in scratchpad yet — grace period active. "
                 "Phase {} has {} missing artifacts. "
-                "Waiting for first artifact write before enforcing."
-            ).format(elapsed_since_init, 120,
+                "Enforcement activates after first artifact is written."
+            ).format(
                      current_phase.get("display_name", current_phase_name),
                      len(missing))
             state["warnings_issued"] = state.get("warnings_issued", 0) + 1
