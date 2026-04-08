@@ -682,7 +682,13 @@ def cmd_stop():
     current_phase_name, current_phase = detect_current_phase(scratchpad, manifest, mode)
 
     if current_phase_name == "complete":
-        # All phases have their artifacts - nothing to enforce
+        # All phases have their artifacts — audit is done.
+        # Clean up breadcrumb so the watchdog doesn't interfere with
+        # non-audit work in the same project directory.
+        try:
+            os.remove(ACTIVE_AUDIT_PATH)
+        except (IOError, OSError):
+            pass
         sys.exit(0)
 
     # Get missing artifacts for current phase
