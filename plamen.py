@@ -1549,11 +1549,35 @@ def _merge_settings_json(w):
     if "defaultMode" not in existing["permissions"]:
         existing["permissions"]["defaultMode"] = plamen_perms.get("defaultMode", "acceptEdits")
 
+    # Merge hooks (additive — add hook events that don't exist, don't overwrite existing)
+    # Resolve python command for the current platform
+    _py_cmd = "python" if sys.platform == "win32" else "python3"
+    plamen_hooks = plamen.get("hooks", {})
+    if plamen_hooks:
+        # Replace placeholder python command with resolved path
+        _hooks_str = _json.dumps(plamen_hooks).replace("python3 ~/", f"{_py_cmd} ~/").replace("python ~/", f"{_py_cmd} ~/")
+        plamen_hooks = _json.loads(_hooks_str)
+        existing.setdefault("hooks", {})
+        for event_name, event_hooks in plamen_hooks.items():
+            if event_name not in existing["hooks"]:
+                existing["hooks"][event_name] = event_hooks
+            else:
+                # Event exists — check if our specific hook command is already present
+                existing_cmds = set()
+                for group in existing["hooks"][event_name]:
+                    for h in group.get("hooks", []):
+                        existing_cmds.add(h.get("command", ""))
+                for group in event_hooks:
+                    for h in group.get("hooks", []):
+                        if h.get("command", "") not in existing_cmds:
+                            existing["hooks"][event_name].append(group)
+                            break
+
     with open(target, "w") as f:
         _json.dump(existing, f, indent=2)
         f.write("\n")
 
-    w(f"  {_C_GREEN}settings.json: merged permissions + env{_RST}\n")
+    w(f"  {_C_GREEN}settings.json: merged permissions + env + hooks{_RST}\n")
 
 
 def _merge_mcp_json(w):
@@ -1824,6 +1848,26 @@ def run_uninstall():
             # Remove Plamen env vars
             for k in plamen_settings.get("env", {}):
                 settings.get("env", {}).pop(k, None)
+            # Remove Plamen hooks
+            plamen_hook_cmds = set()
+            for event_hooks in plamen_settings.get("hooks", {}).values():
+                for group in event_hooks:
+                    for h in group.get("hooks", []):
+                        cmd = h.get("command", "")
+                        if "phase_gate.py" in cmd:
+                            plamen_hook_cmds.add(cmd)
+            if plamen_hook_cmds and "hooks" in settings:
+                for event_name in list(settings["hooks"].keys()):
+                    settings["hooks"][event_name] = [
+                        group for group in settings["hooks"][event_name]
+                        if not any(h.get("command", "") in plamen_hook_cmds
+                                   or "phase_gate.py" in h.get("command", "")
+                                   for h in group.get("hooks", []))
+                    ]
+                    if not settings["hooks"][event_name]:
+                        del settings["hooks"][event_name]
+                if not settings["hooks"]:
+                    del settings["hooks"]
             with open(settings_path, "w") as f:
                 _json.dump(settings, f, indent=2)
                 f.write("\n")

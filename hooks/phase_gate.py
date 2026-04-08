@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
 Plamen Pipeline Watchdog - phase_gate.py
 
