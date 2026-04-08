@@ -20,7 +20,6 @@ import os
 import sys
 import glob
 import time
-import re
 
 
 # ---------------------------------------------------------------------------
@@ -31,9 +30,6 @@ HOOKS_DIR = os.path.dirname(os.path.abspath(__file__))
 MANIFEST_PATH = os.path.join(HOOKS_DIR, "phase_manifest.json")
 ACTIVE_AUDIT_PATH = os.path.join(HOOKS_DIR, ".active_audit")
 STATE_FILENAME = "watchdog_state.json"
-FINDING_ID_PATTERN = re.compile(r"\[[A-Z]{1,6}-\d+\]")
-ZERO_FINDINGS_PATTERN = re.compile(r"(0 findings|0 new findings|DONE:\s*0)", re.IGNORECASE)
-
 # Mapping from template_recommendations.md flag/agent names to actual niche output filenames.
 # The SKILL.md files use shorter names than the raw flag names.
 NICHE_NAME_MAP = {
@@ -189,25 +185,6 @@ def evaluate_condition(condition, mode):
     return False
 
 
-def validate_findings_file(path):
-    """
-    For findings files, check they contain at least one finding ID or explicit zero-findings statement.
-    Returns True if valid, False if suspect (file exists but has no findings content).
-    """
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read(8192)  # Read first 8KB only for speed
-        if FINDING_ID_PATTERN.search(content):
-            return True
-        if ZERO_FINDINGS_PATTERN.search(content):
-            return True
-        # File exists but has no finding content - still count it as present
-        # (it may be a legitimately empty scan result)
-        return True
-    except (IOError, OSError):
-        return False
-
-
 def extract_niche_agents(scratchpad):
     """
     Read template_recommendations.md to find which niche agents were recommended.
@@ -241,6 +218,24 @@ def extract_niche_agents(scratchpad):
                     if filename not in seen:
                         seen.add(filename)
                         niche_files.append(filename)
+            # Also parse table format: | AGENT_NAME | FLAG | YES | YES | ... |
+            if in_niche_section and "|" in line:
+                stripped = line.strip()
+                # Skip header separator rows (e.g., |---|---|---|)
+                if stripped.replace("|", "").replace("-", "").replace(" ", "") == "":
+                    continue
+                cells = [c.strip() for c in stripped.split("|") if c.strip()]
+                if len(cells) >= 4:
+                    name = cells[0].strip()
+                    # Skip table header rows (contain "Niche Agent", "Trigger", etc.)
+                    if name.lower() in ("niche agent", "niche agents", "name", "agent", "skill"):
+                        continue
+                    spawn = cells[3].strip().upper() if len(cells) > 3 else ""
+                    if name and not name.startswith("-") and spawn == "YES":
+                        filename = NICHE_NAME_MAP.get(name, "niche_{}_findings.md".format(name.lower()))
+                        if filename not in seen:
+                            seen.add(filename)
+                            niche_files.append(filename)
     except (IOError, OSError):
         pass
 
@@ -595,6 +590,8 @@ def cmd_stop():
     # response AFTER a block. Give the orchestrator a free pass.
     if state.get("stop_hook_active", False):
         state["stop_hook_active"] = False
+        state["stall_phase"] = None
+        state["stall_missing"] = []
         save_json_file(state_path, state)
         sys.exit(0)
 
@@ -707,6 +704,9 @@ def cmd_stop():
         state["warnings_issued"] = state.get("warnings_issued", 0) + 1
         save_json_file(state_path, state)
 
+        # systemMessage may not be processed for Stop hooks in all Claude Code
+        # versions; also print to stderr as fallback so warnings are visible.
+        print(warn_msg, file=sys.stderr)
         output_json({
             "systemMessage": warn_msg
         })
