@@ -235,7 +235,7 @@ Before starting the pipeline, get a cost estimate by calling `plamen.py`'s `esti
 Run via Bash:
 
 ```bash
-python ~/.claude/plamen.py --estimate "{PROJECT_PATH}" {MODE} {SCOPE_ARGS}
+PY_CMD=$(command -v python3 2>/dev/null || command -v python 2>/dev/null) && "$PY_CMD" ~/.claude/plamen.py --estimate "{PROJECT_PATH}" {MODE} {SCOPE_ARGS}
 ```
 
 Where `{SCOPE_ARGS}` is:
@@ -246,7 +246,7 @@ Where `{SCOPE_ARGS}` is:
 If `plamen.py --estimate` is not available (old version), use this fallback:
 
 ```bash
-python -c "
+PY_CMD=$(command -v python3 2>/dev/null || command -v python 2>/dev/null) && "$PY_CMD" -c "
 import sys; sys.path.insert(0, '$HOME/.claude')
 from plamen import estimate_cost
 import json
@@ -430,7 +430,7 @@ When `MODE == light`, the orchestrator applies these overrides:
 After creating the scratchpad directory and before spawning recon agents, initialize the watchdog:
 
 ```bash
-python ~/.claude/hooks/phase_gate.py --init "{scratchpad}" {MODE} "{PROJECT_PATH}"
+PY_CMD=$(command -v python3 2>/dev/null || command -v python 2>/dev/null) && "$PY_CMD" ~/.claude/hooks/phase_gate.py --init "{scratchpad}" {MODE} "{PROJECT_PATH}"
 ```
 
 This activates the Stop hook enforcement. The watchdog will verify artifact existence at each phase transition and block the orchestrator if mandatory steps are skipped. Non-fatal if the hook script is missing — the pipeline continues without enforcement.

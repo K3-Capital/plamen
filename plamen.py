@@ -1481,7 +1481,15 @@ def _run_symlink_install(w):
         if _safe_link(mcp_src, mcp_dst, w):
             installed.append(mcp_dst)
 
-    # 7. Utility files
+    # 7. Hooks directory (watchdog scripts — phase_gate.py, phase_manifest.json)
+    hooks_src = os.path.join(PLAMEN_HOME, "hooks")
+    hooks_dst = os.path.join(CLAUDE_HOME, "hooks")
+    if os.path.isdir(hooks_src):
+        w(f"  {_C_ORANGE}>{_RST} Linking hooks\n")
+        if _safe_link(hooks_src, hooks_dst, w):
+            installed.append(hooks_dst)
+
+    # 8. Utility files
     for fname in ("plamen", "plamen.py", "plamen.sh", "plamen.bat", "VERSION"):
         src = os.path.join(PLAMEN_HOME, fname)
         if os.path.isfile(src):
@@ -1489,7 +1497,7 @@ def _run_symlink_install(w):
             if _safe_link(src, dst, w):
                 installed.append(dst)
 
-    # 8. Write install manifest
+    # 9. Write install manifest
     import json as _json
     manifest = {
         "plamen_home": PLAMEN_HOME,
@@ -1558,18 +1566,30 @@ def _merge_settings_json(w):
         _hooks_str = _json.dumps(plamen_hooks).replace("python3 ~/", f"{_py_cmd} ~/").replace("python ~/", f"{_py_cmd} ~/")
         plamen_hooks = _json.loads(_hooks_str)
         existing.setdefault("hooks", {})
+
+        def _normalize_py_cmd(cmd: str) -> str:
+            """Normalize python/python3 prefix so platform variants match."""
+            return cmd.replace("python3 ~/", "python ~/").replace("python ~/", "python ~/")
+
         for event_name, event_hooks in plamen_hooks.items():
             if event_name not in existing["hooks"]:
                 existing["hooks"][event_name] = event_hooks
             else:
                 # Event exists — check if our specific hook command is already present
-                existing_cmds = set()
-                for group in existing["hooks"][event_name]:
-                    for h in group.get("hooks", []):
-                        existing_cmds.add(h.get("command", ""))
+                # Normalize python/python3 so re-install on a different platform
+                # replaces the old variant instead of adding a duplicate.
+                existing_cmds_norm = {}
+                for gi, group in enumerate(existing["hooks"][event_name]):
+                    for hi, h in enumerate(group.get("hooks", [])):
+                        existing_cmds_norm[_normalize_py_cmd(h.get("command", ""))] = (gi, hi)
                 for group in event_hooks:
                     for h in group.get("hooks", []):
-                        if h.get("command", "") not in existing_cmds:
+                        norm = _normalize_py_cmd(h.get("command", ""))
+                        if norm in existing_cmds_norm:
+                            # Update existing hook command to use correct platform python
+                            gi, hi = existing_cmds_norm[norm]
+                            existing["hooks"][event_name][gi]["hooks"][hi]["command"] = h["command"]
+                        else:
                             existing["hooks"][event_name].append(group)
                             break
 

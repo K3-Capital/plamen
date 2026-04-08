@@ -26,6 +26,7 @@ These components are symlinked as **directories** — new and modified files are
 | Skills (standard + injectable + niche) | Directory | `~/.claude/agents/skills/` → `~/.plamen/agents/skills/` |
 | Prompts (all 4 language trees) | Directory | `~/.claude/prompts/` → `~/.plamen/prompts/` |
 | MCP server source code | Directory | `~/.claude/custom-mcp/` → `~/.plamen/custom-mcp/` |
+| Hooks (watchdog scripts) | Directory | `~/.claude/hooks/` → `~/.plamen/hooks/` |
 
 These are symlinked as **individual files** — existing files update, but no new files were added since v1.0.0:
 
@@ -90,7 +91,7 @@ Running `plamen install` multiple times is safe. Here's what each step does on r
 |------|--------------|------------|
 | Symlinks | Creates new links | Removes old links, recreates (same result) |
 | User file backup | Backs up to `.pre-plamen` | Skips if backup already exists |
-| settings.json | Merges Plamen entries | Skips entries that already exist |
+| settings.json | Merges Plamen entries (hooks, permissions, env) | Skips entries that already exist; fixes wrong-platform python command in hooks |
 | mcp.json | Merges Plamen servers | Skips existing servers, but fixes wrong-platform paths and backfills new env vars |
 | CLAUDE.md | Injects between markers | Strips old injection, re-injects current |
 | Python deps | Installs packages | `pip` skips already-installed packages |
