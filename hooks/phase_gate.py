@@ -524,20 +524,53 @@ def cmd_track_write():
     PostToolUse hook for Write/Edit. Lightweight tracker.
     - If written file is in scratchpad, reset stall counter
     - If first scratchpad write, check for state initialization
+
+    Supports multiple payload formats:
+    - Claude Code: { "tool_input": { "file_path": "..." } }
+    - Codex flat:  { "file_path": "..." }  or  { "path": "..." }
+    - Codex tool_response: { "tool_response": { "filePath": "..." } }
     """
     stdin_data = read_stdin_json()
 
-    # Extract file path from tool input
+    # Try multiple payload field paths to find the written file path.
+    # Claude Code format: tool_input.file_path
+    file_path = ""
     tool_input = stdin_data.get("tool_input", {})
-    file_path = tool_input.get("file_path", "")
+    if isinstance(tool_input, dict):
+        file_path = tool_input.get("file_path", "")
+
+    # Codex may emit flat fields at the top level
+    if not file_path:
+        file_path = stdin_data.get("file_path", "")
 
     if not file_path:
-        # Also check tool_response for filePath (Edit tool uses this)
+        file_path = stdin_data.get("path", "")
+
+    # Claude Code Edit tool puts path in tool_response.filePath
+    if not file_path:
         tool_response = stdin_data.get("tool_response", {})
         if isinstance(tool_response, dict):
             file_path = tool_response.get("filePath", "")
+            if not file_path:
+                file_path = tool_response.get("file_path", "")
+
+    # Codex may nest under "output" or "result"
+    if not file_path:
+        for key in ("output", "result"):
+            nested = stdin_data.get(key, {})
+            if isinstance(nested, dict):
+                file_path = nested.get("file_path", "") or nested.get("filePath", "") or nested.get("path", "")
+                if file_path:
+                    break
 
     if not file_path:
+        print(
+            "[Watchdog] Unknown PostToolUse payload format -- stall tracking "
+            "disabled for this event. Keys received: {}".format(
+                list(stdin_data.keys()) if stdin_data else "empty"
+            ),
+            file=sys.stderr,
+        )
         sys.exit(0)
 
     file_path = file_path.replace("\\", "/")

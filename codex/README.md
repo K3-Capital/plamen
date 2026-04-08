@@ -63,12 +63,24 @@ python scripts/codex_adapter.py
 
 ## Current Limitations
 
+- **Phase 1 generator**: Most adapter output content is templated, not fully
+  derived from Claude-side manifests. MCP servers (from mcp.json.example),
+  hooks (from phase_manifest.json), and agent role file lists (from
+  agents/depth-*.md) are manifest-driven. AGENTS.md orchestrator rules,
+  SKILL.md phase sequence, and agent developer_instructions are templated
+  and must be updated manually when Claude-side files change. Phase 2 goal
+  is to derive more content from CLAUDE.md and commands/plamen.md parsing.
 - **Model**: Codex uses `o3` (200K context) vs Claude Code's Opus (1M context).
   Thorough mode may require more careful context management.
+- **Thorough mode parity**: Several Thorough-only features are experimental or
+  not yet implemented on Codex. See the Mode Support Status table in
+  `skills/plamen/SKILL.md` for details. Skeptic-Judge, invariant fuzz,
+  Medusa fuzz, and finding perturbation are not yet available.
 - **MCP servers**: All servers are mapped but may need manual API key configuration
   in `config.toml` (replace `YOUR_*_API_KEY` placeholders).
 - **Hooks**: Codex hook format may differ from Claude Code. The `hooks.json` file
   adapts the phase_gate.py script but event names may need adjustment for your
-  Codex version.
+  Codex version. The `phase_gate.py --track-write` handler supports both
+  Claude Code and Codex payload formats.
 - **Platform**: Generated configs assume macOS/Linux (`python3`, forward slashes).
   Windows users should use WSL or adjust paths manually.

@@ -15,6 +15,18 @@ Sources:
     - mcp.json.example             (MCP server definitions)
     - CLAUDE.md                    (orchestrator rules)
     - agents/depth-*.md            (agent role definitions)
+
+NOTE: Phase 1 generator. Most output content is templated, not fully derived
+from Claude-side manifests. The following IS manifest-driven:
+  - config.toml MCP servers (from mcp.json.example)
+  - hooks.json (from phase_manifest.json)
+  - Agent role file list (from agents/depth-*.md listing)
+The following is TEMPLATED and must be updated manually if Claude-side changes:
+  - AGENTS.md orchestrator rules
+  - SKILL.md phase sequence
+  - Agent role developer_instructions
+
+Phase 2 goal: derive more content from CLAUDE.md and commands/plamen.md parsing.
 """
 
 import json
@@ -211,22 +223,19 @@ AGENT_ROLES = [
         "filename": "recon.toml",
         "name": "recon",
         "model": "o3",
-        "description": "Reconnaissance: build environment, pattern detection, attack surface mapping",
+        "description": "Reconnaissance sub-agent: one of 4 parallel recon agents (see SKILL.md Phase 1)",
         "instructions": textwrap.dedent("""\
-            You are the Recon Agent. Read your full methodology from:
+            You are a Recon Sub-Agent. Read your full methodology from:
             ~/.codex/plamen/prompts/{LANGUAGE}/phase1-recon-prompt.md
 
-            Your tasks:
-            1. Build the project and record status
-            2. Detect code patterns and flags
-            3. Ingest documentation
-            4. Map the attack surface
+            The orchestrator assigns you a SUBSET of recon tasks. You are one of
+            4 parallel recon agents:
+            - Agent 1A (RAG): TASK 0 steps 1-5 -- fire-and-forget
+            - Agent 1B (Docs/External/Fork): TASK 0 step 6, TASK 3, TASK 11
+            - Agent 2 (Build/Static/Tests): TASK 1, 2, 8, 9
+            - Agent 3 (Patterns/Surface/Templates): TASK 4, 5, 6, 7, 10
 
-            Write artifacts to {SCRATCHPAD}/:
-            - design_context.md, attack_surface.md, build_status.md
-            - function_list.md, state_variables.md, contract_inventory.md
-            - template_recommendations.md, detected_patterns.md
-            - setter_list.md, emit_list.md, recon_summary.md
+            Execute ONLY the tasks assigned to you by the orchestrator.
 
             When an MCP tool call returns a timeout error or fails, do NOT retry.
             Record [MCP: TIMEOUT] and skip ALL remaining calls to that provider.
@@ -368,10 +377,187 @@ AGENT_ROLES = [
             subsequent pipeline phases. Return your verdicts and stop."""),
     },
     {
+        "filename": "rescan.toml",
+        "name": "rescan",
+        "model": "o3-mini",
+        "description": "Breadth re-scan: second-pass analysis with exclusion list to counter attention saturation",
+        "instructions": textwrap.dedent("""\
+            You are a Breadth Re-Scan Agent. Read your full methodology from:
+            ~/.codex/plamen/rules/phase3b-rescan-prompt.md
+            ~/.codex/plamen/rules/finding-output-format.md
+
+            You perform a SECOND PASS analysis. You receive an exclusion list of
+            already-known findings. Do NOT re-report excluded findings.
+            Focus on vulnerability classes that attention saturation typically masks.
+
+            Write to {SCRATCHPAD}/analysis_rescan_{N}.md
+
+            SCOPE: Write ONLY to your assigned output file. Do NOT read or write
+            other agents' output files. Do NOT proceed to subsequent pipeline phases.
+            Return your findings and stop."""),
+    },
+    {
+        "filename": "per-contract.toml",
+        "name": "per-contract",
+        "model": "o3-mini",
+        "description": "Per-contract focused analysis: maximum depth on a single contract/cluster",
+        "instructions": textwrap.dedent("""\
+            You are a Per-Contract Agent. Read your full methodology from:
+            ~/.codex/plamen/rules/phase3b-rescan-prompt.md (Phase 3c section)
+            ~/.codex/plamen/rules/finding-output-format.md
+
+            You analyze ONLY your assigned contract cluster at maximum depth.
+            You receive an exclusion list -- do NOT re-report excluded findings.
+            For each function: check state completeness, conditional branches,
+            boundary values, pairing audits, and fee/reward traces.
+
+            Write to {SCRATCHPAD}/analysis_percontract_{N}.md
+
+            SCOPE: Write ONLY to your assigned output file. Do NOT proceed to
+            subsequent pipeline phases. Return your findings and stop."""),
+    },
+    {
+        "filename": "semantic-invariant.toml",
+        "name": "semantic-invariant",
+        "model": "o3",
+        "description": "Semantic invariant pre-computation: extract protocol invariants for depth agents",
+        "instructions": textwrap.dedent("""\
+            You are the Semantic Invariant Agent. Your task is to extract and
+            formalize protocol-level semantic invariants from the codebase.
+
+            Read design_context.md and state_variables.md from the scratchpad.
+            Identify invariants: conservation laws, monotonicity constraints,
+            access control boundaries, temporal ordering requirements.
+
+            Write to {SCRATCHPAD}/semantic_invariants.md
+
+            SCOPE: Write ONLY to your assigned output file. Do NOT proceed to
+            subsequent pipeline phases. Return your invariants and stop."""),
+    },
+    {
+        "filename": "scoring.toml",
+        "name": "scoring",
+        "model": "o3-mini",
+        "description": "Confidence scoring: mechanical 4-axis formula application per finding",
+        "instructions": textwrap.dedent("""\
+            You are the Confidence Scoring Agent. Read your full methodology from:
+            ~/.codex/plamen/rules/phase4-confidence-scoring.md
+
+            For each finding, compute 4-axis scores (Evidence, Consensus,
+            Analysis Quality, RAG Match) using the formulas in the methodology.
+            This is a MECHANICAL task -- apply formulas, do not reason about
+            finding validity.
+
+            Read: findings_inventory.md, consensus_map.md, rag_validation.md
+            Write to {SCRATCHPAD}/confidence_scores.md
+
+            SCOPE: Write ONLY to your assigned output file. Return scores and stop."""),
+    },
+    {
+        "filename": "rag-sweep.toml",
+        "name": "rag-sweep",
+        "model": "o3-mini",
+        "description": "RAG validation sweep: validate every finding against historical vulnerability databases",
+        "instructions": textwrap.dedent("""\
+            You are the RAG Validation Sweep Agent. Read your full methodology from:
+            ~/.codex/plamen/rules/phase4-confidence-scoring.md (Phase 4b.5 section)
+
+            For EVERY finding in findings_inventory.md:
+            1. Call validate_hypothesis with the finding's root cause
+            2. Call search_solodit_live with the vulnerability class
+            3. Record the result
+
+            Fallback chain: If MCP tools fail, use WebSearch. If WebSearch fails,
+            record floor score (0.3).
+
+            Write to {SCRATCHPAD}/rag_validation.md
+
+            SCOPE: Write ONLY to your assigned output file. Return validation
+            results and stop."""),
+    },
+    {
+        "filename": "niche-agent.toml",
+        "name": "niche-agent",
+        "model": "o3",
+        "description": "Generic niche agent template: flag-triggered focused analysis on a specific concern",
+        "instructions": textwrap.dedent("""\
+            You are a Niche Agent. Read your specific SKILL.md from the path
+            provided by the orchestrator:
+            ~/.codex/plamen/agents/skills/niche/{SKILL_NAME}/SKILL.md
+
+            Follow the methodology in your skill file exactly.
+            Write findings using the standard finding output format from:
+            ~/.codex/plamen/rules/finding-output-format.md
+
+            Write to {SCRATCHPAD}/niche_{SKILL_NAME_LOWER}_findings.md
+
+            SCOPE: Write ONLY to your assigned output file. Do NOT proceed to
+            subsequent pipeline phases. Return your findings and stop."""),
+    },
+    {
+        "filename": "report-index.toml",
+        "name": "report-index",
+        "model": "o3-mini",
+        "description": "Report index: assign clean report IDs, tier assignments, consolidation, completeness check",
+        "instructions": textwrap.dedent("""\
+            You are the Report Index Agent. Read your full methodology from:
+            ~/.codex/plamen/rules/phase6-report-prompts.md (Step 6a section)
+            ~/.codex/plamen/rules/report-template.md
+
+            Create the master finding index: determine final severities, apply
+            root-cause consolidation, assign sequential report IDs (C-01, H-01,
+            M-01, L-01, I-01), create tier assignments, cross-reference map,
+            and verify completeness.
+
+            Write to {SCRATCHPAD}/report_index.md
+
+            SCOPE: Write ONLY to your assigned output file. Return index summary
+            and stop."""),
+    },
+    {
+        "filename": "report-tier-writer.toml",
+        "name": "report-tier-writer",
+        "model": "o3",
+        "description": "Report tier writer: write full finding sections for an assigned severity tier",
+        "instructions": textwrap.dedent("""\
+            You are a Report Tier Writer. Read your full methodology from:
+            ~/.codex/plamen/rules/phase6-report-prompts.md (Step 6b section)
+            ~/.codex/plamen/rules/report-template.md
+
+            Write full finding sections for EACH finding in your assigned tier.
+            Use report IDs from report_index.md -- NEVER use internal pipeline IDs.
+            Every finding gets its own ### section with Description, Impact,
+            PoC Result, and Recommendation.
+
+            Write to {SCRATCHPAD}/report_{TIER}.md
+
+            SCOPE: Write ONLY to your assigned output file. Return your finding
+            count and stop."""),
+    },
+    {
+        "filename": "report-assembler.toml",
+        "name": "report-assembler",
+        "model": "o3-mini",
+        "description": "Report assembler: merge tier sections into final AUDIT_REPORT.md with quality checks",
+        "instructions": textwrap.dedent("""\
+            You are the Report Assembler. Read your full methodology from:
+            ~/.codex/plamen/rules/phase6-report-prompts.md (Step 6c section)
+            ~/.codex/plamen/rules/report-template.md
+
+            Merge the tier sections into the final audit report:
+            1. Combine report header, executive summary, and all tier sections
+            2. Add priority remediation order
+            3. Run quality checks (finding count, no internal IDs, valid cross-refs)
+            4. Write report_quality.md with check results
+
+            Write the final report to {PROJECT_ROOT}/AUDIT_REPORT.md
+            Write quality check to {SCRATCHPAD}/report_quality.md"""),
+    },
+    {
         "filename": "report-writer.toml",
         "name": "report-writer",
         "model": "o3",
-        "description": "Report generation: index, tier writing, assembly",
+        "description": "Report generation: index, tier writing, assembly (legacy single-agent fallback)",
         "instructions": textwrap.dedent("""\
             You are the Report Writer. Read your full methodology from:
             ~/.codex/plamen/rules/phase6-report-prompts.md
@@ -475,13 +661,50 @@ def generate_skill_md(out_dir: Path) -> None:
     Read `~/.codex/plamen/hooks/phase_manifest.json` for the phase ordering and
     artifact requirements. Execute phases in order, checking gates between phases.
 
-    ### Phase 1: Reconnaissance
+    ### Phase 1: Reconnaissance (4-Agent Split)
 
-    Spawn the `recon` agent (from `~/.codex/agents/recon.toml`):
-    - Replace `{LANGUAGE}` with the detected language
-    - Replace `{SCRATCHPAD}` with the scratchpad path
-    - Wait for completion
-    - Verify all required artifacts exist per phase_manifest.json
+    Do NOT spawn a single monolithic recon agent. Split into 4 parallel agents
+    for timeout isolation (confirmed failure on large projects with single agent).
+
+    Read the full recon prompt structure from:
+    `~/.codex/plamen/prompts/{LANGUAGE}/phase1-recon-prompt.md`
+
+    **Agent 1A: RAG Meta-Buffer** (FIRE-AND-FORGET)
+    - Tasks: TASK 0 steps 1-5 (vuln-db probe + Solodit queries)
+    - Model: o3-mini (mechanical query+format task)
+    - Spawn with `spawn_agent` and do NOT wait for completion
+    - Writes: `meta_buffer.md`
+    - If still running after Agents 1B/2/3 finish, abandon it and write:
+      `meta_buffer.md` with `## RAG: UNAVAILABLE - agent timed out`
+
+    **Agent 1B: Docs + External + Fork** (foreground)
+    - Tasks: TASK 0 step 6 (fork ancestry), TASK 3 (docs), TASK 11 (external)
+    - Model: o3 (web search + design reasoning)
+    - Role: `~/.codex/agents/recon.toml` (with task subset)
+    - Writes: `design_context.md`, `external_production_behavior.md`
+
+    **Agent 2: Build + Static + Tests** (foreground)
+    - Tasks: TASK 1 (build), TASK 2 (static analysis), TASK 8 (tests), TASK 9 (coverage)
+    - Model: o3-mini (tool execution + output formatting)
+    - Role: `~/.codex/agents/recon.toml` (with task subset)
+    - Writes: `build_status.md`, `function_list.md`, `call_graph.md`,
+      `state_variables.md`, `modifiers.md`, `event_definitions.md`,
+      `external_interfaces.md`, `static_analysis.md`, `test_results.md`
+
+    **Agent 3: Patterns + Surface + Templates** (foreground)
+    - Tasks: TASK 4 (patterns), TASK 5 (inventory), TASK 6 (surface), TASK 7 (flags),
+      TASK 10 (templates)
+    - Model: o3 (attack surface + template selection requires reasoning)
+    - Role: `~/.codex/agents/recon.toml` (with task subset)
+    - Writes: `contract_inventory.md`, `attack_surface.md`, `detected_patterns.md`,
+      `setter_list.md`, `emit_list.md`, `constraint_variables.md`,
+      `template_recommendations.md`
+
+    Wait for Agents 1B, 2, 3 to complete. Check Agent 1A status:
+    - If complete: read its `meta_buffer.md` output
+    - If still running: write empty `meta_buffer.md` and proceed
+    Then write `recon_summary.md` (orchestrator, not an agent).
+    Verify all required artifacts exist per phase_manifest.json.
 
     ### Phase 3: Breadth Analysis
 
@@ -501,13 +724,15 @@ def generate_skill_md(out_dir: Path) -> None:
 
     If MODE is thorough:
     - Read `~/.codex/plamen/rules/phase3b-rescan-prompt.md` for re-scan methodology
-    - Spawn re-scan agents, then per-contract agents
+    - Spawn 2-3 `rescan` agents (from `~/.codex/agents/rescan.toml`) with exclusion list
+    - Then spawn `per-contract` agents (from `~/.codex/agents/per-contract.toml`),
+      one per contract cluster
     - Merge new findings into inventory
 
     ### Phase 4a.5: Semantic Invariants (Core/Thorough)
 
     If MODE is core or thorough:
-    - Spawn invariant analysis agent
+    - Spawn `semantic-invariant` agent (from `~/.codex/agents/semantic-invariant.toml`)
     - Produces `semantic_invariants.md`
 
     ### Phase 4b: Depth Loop
@@ -520,7 +745,12 @@ def generate_skill_md(out_dir: Path) -> None:
 
     Also spawn scanner agents from `scanner.toml`.
 
-    For Thorough mode: run confidence scoring, iterations 2-3, RAG sweep.
+    For Core/Thorough: spawn flag-triggered niche agents from `niche-agent.toml`.
+
+    For Thorough mode:
+    - Run confidence scoring via `scoring.toml` agent
+    - Run iterations 2-3 with DA (Devil's Advocate) role
+    - Run RAG sweep via `rag-sweep.toml` agent
     Read `~/.codex/plamen/rules/phase4-confidence-scoring.md` for the full process.
 
     ### Phase 4c: Chain Analysis
@@ -540,10 +770,10 @@ def generate_skill_md(out_dir: Path) -> None:
 
     ### Phase 6: Report Generation
 
-    Spawn `report-writer` agents per `~/.codex/plamen/rules/phase6-report-prompts.md`:
-    1. Index agent (assigns report IDs)
-    2. Three parallel tier writers (Critical+High, Medium, Low+Info)
-    3. Assembler (combines into AUDIT_REPORT.md)
+    Spawn report agents per `~/.codex/plamen/rules/phase6-report-prompts.md`:
+    1. `report-index.toml` agent (assigns clean report IDs, tier assignments)
+    2. Three parallel `report-tier-writer.toml` agents (Critical+High, Medium, Low+Info)
+    3. `report-assembler.toml` agent (combines into AUDIT_REPORT.md)
 
     ## Artifact Gate Enforcement
 
@@ -555,6 +785,33 @@ def generate_skill_md(out_dir: Path) -> None:
 
     If artifacts are missing, the gate will block. Complete the current phase
     before proceeding.
+
+    ## Mode Support Status
+
+    Not all Claude pipeline features have full Codex parity yet. This table
+    shows what is supported, what is experimental, and what is not yet implemented.
+
+    | Phase | Light | Core | Thorough | Notes |
+    |-------|-------|------|----------|-------|
+    | Recon (4-agent split) | Supported | Supported | Supported | |
+    | Breadth | Supported | Supported | Supported | |
+    | Inventory | Supported | Supported | Supported | |
+    | Re-scan (3b) | N/A | N/A | Experimental | Convergence not validated on Codex |
+    | Per-contract (3c) | N/A | N/A | Experimental | Clustering logic untested |
+    | Semantic Invariants | N/A | Supported | Supported | |
+    | Depth Loop iter 1 | Supported | Supported | Supported | |
+    | Depth Loop iter 2-3 | N/A | N/A | Experimental | DA role + anti-dilution untested |
+    | Niche Agents | N/A | Supported | Supported | |
+    | Confidence Scoring | N/A | Supported | Experimental | 4-axis scoring untested |
+    | RAG Sweep | N/A | Supported | Supported | Fallback chain may differ |
+    | Chain Analysis | Supported | Supported | Supported | |
+    | Verification + PoC | Supported | Supported | Experimental | No fuzz variant support |
+    | Skeptic-Judge | N/A | N/A | Not implemented | Requires Claude pipeline feature |
+    | Invariant Fuzz | N/A | N/A | Not implemented | Foundry-specific, needs adaptation |
+    | Medusa Fuzz | N/A | N/A | Not implemented | Parallel campaign, needs adaptation |
+    | Design Stress Test | N/A | N/A | Experimental | 1 agent slot, untested |
+    | Finding Perturbation | N/A | N/A | Not implemented | |
+    | Report (multi-agent) | Supported | Supported | Supported | |
 
     ## Mode-Specific Behavior
 
@@ -674,13 +931,25 @@ def generate_readme(out_dir: Path) -> None:
 
     ## Current Limitations
 
+    - **Phase 1 generator**: Most adapter output content is templated, not fully
+      derived from Claude-side manifests. MCP servers (from mcp.json.example),
+      hooks (from phase_manifest.json), and agent role file lists (from
+      agents/depth-*.md) are manifest-driven. AGENTS.md orchestrator rules,
+      SKILL.md phase sequence, and agent developer_instructions are templated
+      and must be updated manually when Claude-side files change. Phase 2 goal
+      is to derive more content from CLAUDE.md and commands/plamen.md parsing.
     - **Model**: Codex uses `o3` (200K context) vs Claude Code's Opus (1M context).
       Thorough mode may require more careful context management.
+    - **Thorough mode parity**: Several Thorough-only features are experimental or
+      not yet implemented on Codex. See the Mode Support Status table in
+      `skills/plamen/SKILL.md` for details. Skeptic-Judge, invariant fuzz,
+      Medusa fuzz, and finding perturbation are not yet available.
     - **MCP servers**: All servers are mapped but may need manual API key configuration
       in `config.toml` (replace `YOUR_*_API_KEY` placeholders).
     - **Hooks**: Codex hook format may differ from Claude Code. The `hooks.json` file
       adapts the phase_gate.py script but event names may need adjustment for your
-      Codex version.
+      Codex version. The `phase_gate.py --track-write` handler supports both
+      Claude Code and Codex payload formats.
     - **Platform**: Generated configs assume macOS/Linux (`python3`, forward slashes).
       Windows users should use WSL or adjust paths manually.
     """)

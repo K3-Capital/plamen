@@ -56,13 +56,50 @@ python3 ~/.codex/plamen/hooks/phase_gate.py --init {SCRATCHPAD} {MODE} {PROJECT_
 Read `~/.codex/plamen/hooks/phase_manifest.json` for the phase ordering and
 artifact requirements. Execute phases in order, checking gates between phases.
 
-### Phase 1: Reconnaissance
+### Phase 1: Reconnaissance (4-Agent Split)
 
-Spawn the `recon` agent (from `~/.codex/agents/recon.toml`):
-- Replace `{LANGUAGE}` with the detected language
-- Replace `{SCRATCHPAD}` with the scratchpad path
-- Wait for completion
-- Verify all required artifacts exist per phase_manifest.json
+Do NOT spawn a single monolithic recon agent. Split into 4 parallel agents
+for timeout isolation (confirmed failure on large projects with single agent).
+
+Read the full recon prompt structure from:
+`~/.codex/plamen/prompts/{LANGUAGE}/phase1-recon-prompt.md`
+
+**Agent 1A: RAG Meta-Buffer** (FIRE-AND-FORGET)
+- Tasks: TASK 0 steps 1-5 (vuln-db probe + Solodit queries)
+- Model: o3-mini (mechanical query+format task)
+- Spawn with `spawn_agent` and do NOT wait for completion
+- Writes: `meta_buffer.md`
+- If still running after Agents 1B/2/3 finish, abandon it and write:
+  `meta_buffer.md` with `## RAG: UNAVAILABLE - agent timed out`
+
+**Agent 1B: Docs + External + Fork** (foreground)
+- Tasks: TASK 0 step 6 (fork ancestry), TASK 3 (docs), TASK 11 (external)
+- Model: o3 (web search + design reasoning)
+- Role: `~/.codex/agents/recon.toml` (with task subset)
+- Writes: `design_context.md`, `external_production_behavior.md`
+
+**Agent 2: Build + Static + Tests** (foreground)
+- Tasks: TASK 1 (build), TASK 2 (static analysis), TASK 8 (tests), TASK 9 (coverage)
+- Model: o3-mini (tool execution + output formatting)
+- Role: `~/.codex/agents/recon.toml` (with task subset)
+- Writes: `build_status.md`, `function_list.md`, `call_graph.md`,
+  `state_variables.md`, `modifiers.md`, `event_definitions.md`,
+  `external_interfaces.md`, `static_analysis.md`, `test_results.md`
+
+**Agent 3: Patterns + Surface + Templates** (foreground)
+- Tasks: TASK 4 (patterns), TASK 5 (inventory), TASK 6 (surface), TASK 7 (flags),
+  TASK 10 (templates)
+- Model: o3 (attack surface + template selection requires reasoning)
+- Role: `~/.codex/agents/recon.toml` (with task subset)
+- Writes: `contract_inventory.md`, `attack_surface.md`, `detected_patterns.md`,
+  `setter_list.md`, `emit_list.md`, `constraint_variables.md`,
+  `template_recommendations.md`
+
+Wait for Agents 1B, 2, 3 to complete. Check Agent 1A status:
+- If complete: read its `meta_buffer.md` output
+- If still running: write empty `meta_buffer.md` and proceed
+Then write `recon_summary.md` (orchestrator, not an agent).
+Verify all required artifacts exist per phase_manifest.json.
 
 ### Phase 3: Breadth Analysis
 
@@ -82,13 +119,15 @@ Spawn the `inventory` agent (from `~/.codex/agents/inventory.toml`):
 
 If MODE is thorough:
 - Read `~/.codex/plamen/rules/phase3b-rescan-prompt.md` for re-scan methodology
-- Spawn re-scan agents, then per-contract agents
+- Spawn 2-3 `rescan` agents (from `~/.codex/agents/rescan.toml`) with exclusion list
+- Then spawn `per-contract` agents (from `~/.codex/agents/per-contract.toml`),
+  one per contract cluster
 - Merge new findings into inventory
 
 ### Phase 4a.5: Semantic Invariants (Core/Thorough)
 
 If MODE is core or thorough:
-- Spawn invariant analysis agent
+- Spawn `semantic-invariant` agent (from `~/.codex/agents/semantic-invariant.toml`)
 - Produces `semantic_invariants.md`
 
 ### Phase 4b: Depth Loop
@@ -101,7 +140,12 @@ Spawn depth agents in parallel from their respective TOML roles:
 
 Also spawn scanner agents from `scanner.toml`.
 
-For Thorough mode: run confidence scoring, iterations 2-3, RAG sweep.
+For Core/Thorough: spawn flag-triggered niche agents from `niche-agent.toml`.
+
+For Thorough mode:
+- Run confidence scoring via `scoring.toml` agent
+- Run iterations 2-3 with DA (Devil's Advocate) role
+- Run RAG sweep via `rag-sweep.toml` agent
 Read `~/.codex/plamen/rules/phase4-confidence-scoring.md` for the full process.
 
 ### Phase 4c: Chain Analysis
@@ -121,10 +165,10 @@ Spawn `verifier` agents for each hypothesis batch:
 
 ### Phase 6: Report Generation
 
-Spawn `report-writer` agents per `~/.codex/plamen/rules/phase6-report-prompts.md`:
-1. Index agent (assigns report IDs)
-2. Three parallel tier writers (Critical+High, Medium, Low+Info)
-3. Assembler (combines into AUDIT_REPORT.md)
+Spawn report agents per `~/.codex/plamen/rules/phase6-report-prompts.md`:
+1. `report-index.toml` agent (assigns clean report IDs, tier assignments)
+2. Three parallel `report-tier-writer.toml` agents (Critical+High, Medium, Low+Info)
+3. `report-assembler.toml` agent (combines into AUDIT_REPORT.md)
 
 ## Artifact Gate Enforcement
 
@@ -136,6 +180,33 @@ python3 ~/.codex/plamen/hooks/phase_gate.py --stop
 
 If artifacts are missing, the gate will block. Complete the current phase
 before proceeding.
+
+## Mode Support Status
+
+Not all Claude pipeline features have full Codex parity yet. This table
+shows what is supported, what is experimental, and what is not yet implemented.
+
+| Phase | Light | Core | Thorough | Notes |
+|-------|-------|------|----------|-------|
+| Recon (4-agent split) | Supported | Supported | Supported | |
+| Breadth | Supported | Supported | Supported | |
+| Inventory | Supported | Supported | Supported | |
+| Re-scan (3b) | N/A | N/A | Experimental | Convergence not validated on Codex |
+| Per-contract (3c) | N/A | N/A | Experimental | Clustering logic untested |
+| Semantic Invariants | N/A | Supported | Supported | |
+| Depth Loop iter 1 | Supported | Supported | Supported | |
+| Depth Loop iter 2-3 | N/A | N/A | Experimental | DA role + anti-dilution untested |
+| Niche Agents | N/A | Supported | Supported | |
+| Confidence Scoring | N/A | Supported | Experimental | 4-axis scoring untested |
+| RAG Sweep | N/A | Supported | Supported | Fallback chain may differ |
+| Chain Analysis | Supported | Supported | Supported | |
+| Verification + PoC | Supported | Supported | Experimental | No fuzz variant support |
+| Skeptic-Judge | N/A | N/A | Not implemented | Requires Claude pipeline feature |
+| Invariant Fuzz | N/A | N/A | Not implemented | Foundry-specific, needs adaptation |
+| Medusa Fuzz | N/A | N/A | Not implemented | Parallel campaign, needs adaptation |
+| Design Stress Test | N/A | N/A | Experimental | 1 agent slot, untested |
+| Finding Perturbation | N/A | N/A | Not implemented | |
+| Report (multi-agent) | Supported | Supported | Supported | |
 
 ## Mode-Specific Behavior
 
