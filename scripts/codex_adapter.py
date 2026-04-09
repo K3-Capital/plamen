@@ -192,6 +192,14 @@ def generate_config_toml(out_dir: Path) -> None:
         if command in ("python", "python3"):
             command = "python" if sys.platform == "win32" else "python3"
 
+        # Resolve npx/node to absolute paths from user's Claude mcp.json
+        # Bare "npx" inside Codex sandbox can't find the local npm cache
+        if command in ("npx", "node"):
+            import shutil
+            resolved = shutil.which(command)
+            if resolved:
+                command = resolved.replace("\\", "/")
+
         # Normalize cwd: use ABSOLUTE path (~ doesn't expand on Windows Codex)
         plamen_abs = str(PLAMEN_HOME).replace("\\", "/")
         if cwd.startswith("./"):
