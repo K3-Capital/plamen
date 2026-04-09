@@ -11,6 +11,7 @@
  */
 
 const { spawn } = require('child_process');
+const path = require('path');
 
 const args = process.argv.slice(2);
 if (args.length === 0) {
@@ -18,11 +19,21 @@ if (args.length === 0) {
   process.exit(1);
 }
 
+let command = args[0];
+let commandArgs = args.slice(1);
+
+// On Windows, launching a .js file directly can invoke the shell file association
+// instead of Node. If the target is a JS entrypoint, force execution via Node.
+if (/\.(c?m?js)$/i.test(command)) {
+  commandArgs = [command, ...commandArgs];
+  command = process.execPath;
+}
+
 // Spawn the actual MCP server
-const child = spawn(args[0], args.slice(1), {
+const child = spawn(command, commandArgs, {
   stdio: ['pipe', 'pipe', 'inherit'],
   env: process.env,
-  shell: true
+  shell: false
 });
 
 // Buffer for incomplete messages from the child
@@ -81,24 +92,39 @@ function processChildOutput(chunk) {
  * - Top-level allOf: merge all sub-schemas
  * - Property-level: same treatment recursively
  */
-function sanitizeSchema(schema) {
+function sanitizeSchema(schema, defs) {
   if (!schema || typeof schema !== 'object') return schema;
-  if (Array.isArray(schema)) return schema.map(sanitizeSchema);
+  if (Array.isArray(schema)) return schema.map(s => sanitizeSchema(s, defs));
+
+  // Resolve $ref references using $defs
+  if (schema['$ref'] && defs) {
+    const refPath = schema['$ref'].replace('#/$defs/', '');
+    const resolved = defs[refPath];
+    if (resolved) {
+      return sanitizeSchema({ ...resolved }, defs);
+    }
+  }
+
+  // Capture $defs from root schema for ref resolution
+  const localDefs = schema['$defs'] || defs;
 
   const result = { ...schema };
+
+  // Remove $defs from output (already inlined via $ref resolution)
+  delete result['$defs'];
 
   // Handle top-level anyOf (from z.optional / z.union)
   if (result.anyOf) {
     const variants = result.anyOf.filter(v => v.type !== 'null' && v.type !== undefined || v.properties);
     if (variants.length === 1) {
       // Single non-null variant — unwrap it
-      const unwrapped = sanitizeSchema(variants[0]);
+      const unwrapped = sanitizeSchema(variants[0], localDefs);
       delete result.anyOf;
       Object.assign(result, unwrapped);
     } else if (variants.length > 1) {
       // Multiple variants — pick the object one if exists, otherwise first
       const objVariant = variants.find(v => v.type === 'object' || v.properties);
-      const picked = sanitizeSchema(objVariant || variants[0]);
+      const picked = sanitizeSchema(objVariant || variants[0], localDefs);
       delete result.anyOf;
       Object.assign(result, picked);
     } else {
@@ -112,11 +138,11 @@ function sanitizeSchema(schema) {
     // Pick the first variant that looks like an object schema
     const objVariant = result.oneOf.find(v => v.type === 'object' || v.properties);
     if (objVariant) {
-      const picked = sanitizeSchema(objVariant);
+      const picked = sanitizeSchema(objVariant, localDefs);
       delete result.oneOf;
       Object.assign(result, picked);
     } else {
-      const picked = sanitizeSchema(result.oneOf[0]);
+      const picked = sanitizeSchema(result.oneOf[0], localDefs);
       delete result.oneOf;
       Object.assign(result, picked);
     }
@@ -126,7 +152,7 @@ function sanitizeSchema(schema) {
   if (result.allOf) {
     delete result.allOf;
     for (const sub of schema.allOf) {
-      const sanitized = sanitizeSchema(sub);
+      const sanitized = sanitizeSchema(sub, localDefs);
       // Merge properties
       if (sanitized.properties) {
         result.properties = { ...(result.properties || {}), ...sanitized.properties };
@@ -143,18 +169,18 @@ function sanitizeSchema(schema) {
   // Recurse into properties
   if (result.properties) {
     for (const [key, value] of Object.entries(result.properties)) {
-      result.properties[key] = sanitizeSchema(value);
+      result.properties[key] = sanitizeSchema(value, localDefs);
     }
   }
 
   // Recurse into items (arrays)
   if (result.items) {
-    result.items = sanitizeSchema(result.items);
+    result.items = sanitizeSchema(result.items, localDefs);
   }
 
   // Recurse into additionalProperties
   if (result.additionalProperties && typeof result.additionalProperties === 'object') {
-    result.additionalProperties = sanitizeSchema(result.additionalProperties);
+    result.additionalProperties = sanitizeSchema(result.additionalProperties, localDefs);
   }
 
   return result;
