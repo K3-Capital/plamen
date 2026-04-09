@@ -1,0 +1,13 @@
+# Auto-approve all Plamen MCP server tools
+# Codex requires explicit per-server tool approval separate from approval_mode
+
+[allow]
+"slither-analyzer/*" = true
+"unified-vuln-db/*" = true
+"solana-fender/*" = true
+"farofino/*" = true
+"foundry-suite/*" = true
+"evm-chain-data/*" = true
+"tavily-search/*" = true
+"memory/*" = true
+"helius/*" = true

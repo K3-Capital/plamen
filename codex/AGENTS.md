@@ -73,55 +73,6 @@ Use the TOML role definitions in `~/.codex/agents/` to spawn sub-agents.
 Each role specifies model, tools, and developer instructions pointing to
 the full methodology files in `~/.codex/plamen/`.
 
-## Platform Awareness (MANDATORY)
-
-Codex runs on the HOST shell (PowerShell on Windows, bash on macOS/Linux).
-The shared methodology templates were written for bash. You MUST translate:
-
-| Template Says | PowerShell Equivalent | Bash Equivalent |
-|---|---|---|
-| `grep -rn "pattern" src/` | `Get-ChildItem -Recurse src/ -Filter *.sol \| Select-String "pattern"` | `grep -rn "pattern" src/` |
-| `rg "pattern" src/**/*.sol` | `Get-ChildItem -Recurse src/ -Include *.sol \| Select-String "pattern"` | `rg "pattern" src/` |
-| `find . -name "*.sol"` | `Get-ChildItem -Recurse -Filter *.sol` | `find . -name "*.sol"` |
-| `wc -l file` | `(Get-Content file).Count` | `wc -l file` |
-| `cat file` | `Get-Content file` | `cat file` |
-| `ls dir/` | `Get-ChildItem dir/` | `ls dir/` |
-| `fc file1 file2` | `Compare-Object (gc file1) (gc file2)` | `diff file1 file2` |
-| `echo "text" > file` | `Set-Content file "text"` | `echo "text" > file` |
-
-**Rules**:
-- NEVER use `rg` or `grep` as shell commands — use `Get-ChildItem | Select-String` on Windows
-- NEVER use glob patterns like `src/**/*.sol` in shell — use `-Recurse -Include *.sol`
-- NEVER use `fc` (collides with PowerShell `Format-Custom`) — use `Compare-Object`
-- Check `$env:OS` or `$IsWindows` to detect platform if needed
-- File paths: use backslashes in PowerShell (`src\contracts\`), forward slashes in bash
-
-## Git Safety
-
-The target project may NOT be a git repository. Before any git command:
-```powershell
-# PowerShell
-git rev-parse --is-inside-work-tree 2>$null
-if ($LASTEXITCODE -ne 0) { Write-Host "Not a git repo — skipping git steps" }
-```
-Skip `git log`, `git rev-list`, `git blame` etc. if not a git repo. Use file-system
-analysis only (Get-ChildItem, Get-Content, Select-String).
-
-## Thread Budget
-
-Codex limits concurrent agents to `max_threads` (default 8). Budget your spawns:
-
-| Mode | Recon | Breadth | Depth | Chain | Verify | Report | Total Max |
-|------|-------|---------|-------|-------|--------|--------|-----------|
-| Light | 2 | 3 | 4 | 1 | 2 | 2 | ~14 (sequential phases, max 4 concurrent) |
-| Core | 3 | 5 | 6 | 2 | 3 | 3 | ~22 (max 6 concurrent) |
-
-NEVER spawn more than 6 agents simultaneously. If a phase needs more, split into batches:
-```
-Batch 1: spawn agents 1-6, wait for completion
-Batch 2: spawn agents 7-N, wait for completion
-```
-
 ## Artifact Discipline
 
 - Write ONLY to your assigned output file in the scratchpad directory.

@@ -50,58 +50,18 @@ Detect the project's smart contract language by scanning `PROJECT_ROOT`:
 Set `LANGUAGE` to the detected value. This resolves all `{LANGUAGE}` placeholders
 in file paths throughout the pipeline.
 
-## Step 1.5: Platform Detection
-
-Detect the host shell. This determines how you run commands throughout the audit:
-
-```powershell
-# PowerShell (Windows)
-$IS_WINDOWS = $true
-$PY = "python"
-```
-```bash
-# Bash (macOS/Linux)
-IS_WINDOWS=false
-PY="python3"
-```
-
-**Use AGENTS.md Platform Awareness table** for all shell commands in this skill.
-Never use `grep`, `rg`, `find`, `wc`, `cat`, `fc` raw on Windows — translate
-to PowerShell equivalents.
-
 ## Step 2: Create Scratchpad
 
-```powershell
-# PowerShell
-New-Item -ItemType Directory -Force "{PROJECT_ROOT}/.scratchpad" | Out-Null
-```
 ```bash
-# Bash
-mkdir -p "{PROJECT_ROOT}/.scratchpad"
+mkdir -p {PROJECT_ROOT}/.scratchpad
 ```
 
 Set `SCRATCHPAD = {PROJECT_ROOT}/.scratchpad`.
 
-## Step 2.5: Git Check
-
-```powershell
-# Check if target is a git repo — skip git steps if not
-git rev-parse --is-inside-work-tree 2>$null
-$IS_GIT = ($LASTEXITCODE -eq 0)
-```
-
-If `$IS_GIT` is false, skip ALL git commands (log, rev-list, blame, diff) throughout the audit.
-Use file-system analysis only.
-
 ## Step 3: Initialize Watchdog
 
-```powershell
-# PowerShell
-& $PY ~/.codex/plamen/hooks/phase_gate.py --init "$SCRATCHPAD" $MODE "$PROJECT_ROOT"
-```
 ```bash
-# Bash
-$PY ~/.codex/plamen/hooks/phase_gate.py --init "$SCRATCHPAD" "$MODE" "$PROJECT_ROOT"
+python3 ~/.codex/plamen/hooks/phase_gate.py --init {SCRATCHPAD} {MODE} {PROJECT_ROOT}
 ```
 
 ## Step 4: Execute Phase Sequence

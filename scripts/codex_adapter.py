@@ -163,6 +163,9 @@ def generate_config_toml(out_dir: Path) -> None:
     example_mcp = load_json(PLAMEN_HOME / "mcp.json.example")
     servers = example_mcp.get("mcpServers", {})
 
+    codex_shared_root = Path.home() / ".codex" / "plamen"
+    codex_shared_root_str = str(codex_shared_root).replace("\\", "/")
+
     lines = [
         '# Model for the orchestrator and agents that inherit from global config.',
         '# Change to match your Codex account:',
@@ -181,6 +184,36 @@ def generate_config_toml(out_dir: Path) -> None:
         '',
     ]
 
+    import shutil
+
+    python_bin = (
+        "C:/Users/plmnt/AppData/Local/Programs/Python/Python312/python.exe"
+        if sys.platform == "win32"
+        else (shutil.which("python3") or "python3")
+    )
+    slither_bin = (
+        "C:/Users/plmnt/AppData/Local/Programs/Python/Python312/Scripts/slither-mcp.exe"
+        if sys.platform == "win32"
+        else (shutil.which("slither-mcp") or "slither-mcp")
+    )
+    node_bin = "C:/Program Files/nodejs/node.exe" if sys.platform == "win32" else "node"
+    node_wrapper = (
+        f"{codex_shared_root_str}/mcp-packages/run-node-mcp.cmd"
+        if sys.platform == "win32"
+        else node_bin
+    )
+    sanitizer = f"{codex_shared_root_str}/mcp-packages/schema-sanitizer.js"
+    npm_node_modules = codex_shared_root / "mcp-packages" / "node_modules"
+    npm_servers = {
+        "evm-chain-data": "@mcpdotdirect/evm-mcp-server/build/index.js",
+        "foundry-suite": "@pranesh.asp/foundry-mcp-server/dist/index.js",
+        "tavily-search": "tavily-mcp/build/index.js",
+        "memory": "@modelcontextprotocol/server-memory/dist/index.js",
+        "helius": "@mcp-dockmaster/mcp-server-helius/build/index.js",
+    }
+    sanitized_npm_servers = {"evm-chain-data"}
+    incompatible_servers = {"evm-chain-data"}
+
     for name, srv in servers.items():
         command = srv.get("command", "")
         args = srv.get("args", [])
@@ -188,43 +221,61 @@ def generate_config_toml(out_dir: Path) -> None:
         env = srv.get("env", {})
         comment = srv.get("_comment", "")
 
-        # Normalize command: resolve python for current platform
+        # Normalize command: use fully qualified executables where possible.
         if command in ("python", "python3"):
-            command = "python" if sys.platform == "win32" else "python3"
+            command = python_bin
+        elif command == "slither-mcp":
+            command = slither_bin
 
         # Resolve npx/node to absolute paths from user's Claude mcp.json
         # Bare "npx" inside Codex sandbox can't find the local npm cache
         if command in ("npx", "node"):
-            import shutil
             resolved = shutil.which(command)
             if resolved:
                 command = resolved.replace("\\", "/")
 
-        # Normalize cwd: use ABSOLUTE path (~ doesn't expand on Windows Codex)
-        plamen_abs = str(PLAMEN_HOME).replace("\\", "/")
+        # Normalize cwd: point at the Codex-owned shared methodology tree.
         if cwd.startswith("./"):
-            cwd = plamen_abs + "/" + cwd[2:]
+            cwd = codex_shared_root_str + "/" + cwd[2:]
         elif cwd.startswith("custom-mcp/"):
-            cwd = plamen_abs + "/" + cwd
+            cwd = codex_shared_root_str + "/" + cwd
 
         lines.append(f'[mcp_servers.{name}]')
         if comment:
             lines.append(f'# {comment}')
         lines.append(f'type = "stdio"')
-        lines.append(f'command = "{command}"')
+        if name in npm_servers:
+            entry_js = str(npm_node_modules / npm_servers[name]).replace("\\", "/")
+            lines.append(f'command = "{node_wrapper}"')
+            if name in sanitized_npm_servers:
+                lines.append("args = [")
+                lines.append(f'  "{sanitizer}",')
+                lines.append(f'  "{entry_js}",')
+                lines.append("]")
+            else:
+                lines.append(f'args = ["{entry_js}"]')
+        else:
+            lines.append(f'command = "{command}"')
 
-        # Format args as TOML array
-        args_str = ", ".join(f'"{a}"' for a in args)
-        lines.append(f'args = [{args_str}]')
+            # Format args as TOML array
+            args_str = ", ".join(f'"{a}"' for a in args)
+            lines.append(f'args = [{args_str}]')
 
         if cwd:
             lines.append(f'cwd = "{cwd}"')
+        if name == "foundry-suite":
+            lines.append('startup_timeout_sec = 90')
+        elif name == "evm-chain-data":
+            lines.append('startup_timeout_sec = 60')
 
-        # Skip servers known to be incompatible with Codex's MCP protocol version
-        INCOMPATIBLE_SERVERS = {"evm-chain-data"}  # MCP 2025-06-18 vs Codex's 2024-11-05
-        if name in INCOMPATIBLE_SERVERS:
-            lines.append(f'# [mcp_servers.{name}]')
-            lines.append(f'# ^ Disabled: incompatible MCP protocol version with Codex')
+        if name in incompatible_servers:
+            commented_start = len(lines) - 1
+            while commented_start >= 0 and not lines[commented_start].startswith(f'[mcp_servers.{name}]'):
+                commented_start -= 1
+            for i in range(commented_start, len(lines)):
+                if lines[i] and not lines[i].startswith('#'):
+                    lines[i] = '# ' + lines[i]
+            lines.append('# ^ Disabled in Codex: incompatible MCP protocol version')
             lines.append('')
             continue
 
