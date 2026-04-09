@@ -108,11 +108,29 @@ Read the full recon prompt structure from:
   `setter_list.md`, `emit_list.md`, `constraint_variables.md`,
   `template_recommendations.md`
 
-Wait for Agents 1B, 2, 3 to complete. Check Agent 1A status:
+### Recon Timeout Policy
+Wait maximum 5 minutes for each foreground recon agent.
+If an agent hasn't returned after 5 minutes:
+1. Check if its assigned artifacts exist in the scratchpad
+2. If YES: the agent wrote output but didn't return cleanly. Close it and proceed.
+3. If NO: mark those artifacts as MISSING and continue. Note gaps in recon_summary.md.
+
+Agent 1A (RAG) is fire-and-forget. Do NOT wait for it. If meta_buffer.md doesn't exist after other agents finish, write a minimal one: "# Meta-Buffer\n## RAG: UNAVAILABLE"
+
+Wait for Agents 1B, 2, 3 to complete (subject to 5-minute timeout above). Check Agent 1A status:
 - If complete: read its `meta_buffer.md` output
 - If still running: write empty `meta_buffer.md` and proceed
 Then write `recon_summary.md` (orchestrator, not an agent).
 Verify all required artifacts exist per phase_manifest.json.
+
+### Phase Gate: Recon -> Breadth
+Before spawning breadth agents, verify these artifacts exist and are non-empty:
+```powershell
+$required = @("design_context.md","attack_surface.md","build_status.md","function_list.md","state_variables.md","contract_inventory.md","template_recommendations.md","detected_patterns.md","setter_list.md","emit_list.md","recon_summary.md")
+$missing = $required | Where-Object { -not (Test-Path ".scratchpad\$_") -or (Get-Item ".scratchpad\$_").Length -lt 100 }
+if ($missing) { Write-Host "BLOCKED: Missing recon artifacts: $($missing -join ', ')" }
+```
+If ANY are missing: do NOT proceed. Re-spawn the failed recon agent(s) for the missing artifacts only.
 
 ### Phase 3: Breadth Analysis
 
@@ -123,11 +141,28 @@ Spawn breadth agents in batches of max 6 (from `~/.codex/agents/breadth.toml`):
 - Wait for all batches to complete
 - Verify at least 3 `analysis_*.md` files exist
 
+### Phase Gate: Breadth -> Inventory
+Before spawning the inventory agent, verify breadth output exists:
+```powershell
+$analysisFiles = Get-ChildItem ".scratchpad" -Filter "analysis_*.md" -ErrorAction SilentlyContinue
+if ($analysisFiles.Count -lt 3) { Write-Host "BLOCKED: Only $($analysisFiles.Count) analysis_*.md files found (need >= 3)" }
+```
+If fewer than 3 analysis files exist: do NOT proceed. Re-spawn failed breadth agents.
+
 ### Phase 4a: Findings Inventory
 
 Spawn the `inventory` agent (from `~/.codex/agents/inventory.toml`):
 - Reads all `analysis_*.md` files
 - Produces `findings_inventory.md`
+
+### Phase Gate: Inventory -> Depth
+Before proceeding to depth (or re-scan/per-contract), verify inventory exists:
+```powershell
+if (-not (Test-Path ".scratchpad\findings_inventory.md") -or (Get-Item ".scratchpad\findings_inventory.md").Length -lt 100) {
+    Write-Host "BLOCKED: findings_inventory.md missing or empty"
+}
+```
+If findings_inventory.md is missing: do NOT proceed. Re-spawn the inventory agent.
 
 ### Phase 3b/3c: Re-Scan and Per-Contract (Thorough only)
 
@@ -166,6 +201,14 @@ For Thorough mode:
 - Run RAG sweep via `rag-sweep.toml` agent
 Read `~/.codex/plamen/rules/phase4-confidence-scoring.md` for the full process.
 
+### Phase Gate: Depth -> Chain
+Before spawning chain analysis agents, verify depth output exists:
+```powershell
+$depthFiles = Get-ChildItem ".scratchpad" -Filter "depth_*_findings.md" -ErrorAction SilentlyContinue
+if ($depthFiles.Count -lt 2) { Write-Host "BLOCKED: Only $($depthFiles.Count) depth_*_findings.md files found (need >= 2)" }
+```
+If fewer than 2 depth findings files exist: do NOT proceed. Re-spawn failed depth agents.
+
 ### Phase 4c: Chain Analysis
 
 Spawn `chain-analyzer` agents sequentially:
@@ -174,6 +217,15 @@ Spawn `chain-analyzer` agents sequentially:
 
 Read `~/.codex/plamen/rules/phase4c-chain-prompt.md` for prompts.
 
+### Phase Gate: Chain -> Verification
+Before spawning verifier agents, verify chain analysis output exists:
+```powershell
+$chainRequired = @("hypotheses.md","chain_hypotheses.md","synthesis_full.md")
+$chainMissing = $chainRequired | Where-Object { -not (Test-Path ".scratchpad\$_") -or (Get-Item ".scratchpad\$_").Length -lt 50 }
+if ($chainMissing) { Write-Host "BLOCKED: Missing chain artifacts: $($chainMissing -join ', ')" }
+```
+If ANY chain artifacts are missing: do NOT proceed. Re-spawn the failed chain agent(s).
+
 ### Phase 5: Verification
 
 Spawn `verifier` agents in batches of 6 for each hypothesis batch:
@@ -181,6 +233,14 @@ Spawn `verifier` agents in batches of 6 for each hypothesis batch:
 - Batch hypotheses by severity (Critical first)
 - If more than 6 hypotheses: spawn verifiers 1-6, wait, then spawn 7+
 - Execute PoCs and record verdicts
+
+### Phase Gate: Verification -> Report
+Before spawning report agents, verify at least one verification file exists:
+```powershell
+$verifyFiles = Get-ChildItem ".scratchpad" -Filter "verify_*.md" -ErrorAction SilentlyContinue
+if ($verifyFiles.Count -lt 1) { Write-Host "BLOCKED: No verify_*.md files found (need >= 1)" }
+```
+If no verification files exist: do NOT proceed. Re-spawn verifier agents for the highest-severity hypotheses.
 
 ### Phase 6: Report Generation
 
@@ -238,3 +298,22 @@ shows what is supported, what is experimental, and what is not yet implemented.
 | Niche agents | Skip | Flag-triggered | Flag-triggered |
 | RAG sweep | Skip | 1 agent | 1 agent |
 | Verification scope | Chains + Medium+ | Chains + Medium+ | ALL severities |
+
+## MANDATORY FINAL STEP: Report Generation
+
+Regardless of how prior phases ran, you MUST generate the final report.
+
+1. Check: does `{PROJECT_ROOT}/AUDIT_REPORT.md` exist?
+2. If NO: spawn report agents (index -> tier writers -> assembler)
+3. If still NO after report agents: write a minimal report yourself from the scratchpad artifacts
+4. VERIFY: `{PROJECT_ROOT}/AUDIT_REPORT.md` exists and is > 500 bytes
+
+```powershell
+if (-not (Test-Path "{PROJECT_ROOT}\AUDIT_REPORT.md") -or (Get-Item "{PROJECT_ROOT}\AUDIT_REPORT.md").Length -lt 500) {
+    Write-Host "CRITICAL: AUDIT_REPORT.md missing or incomplete. Generating fallback report."
+    # Assemble a minimal report from scratchpad findings
+}
+```
+
+The audit is NOT complete until AUDIT_REPORT.md exists in the project root.
+This is the FINAL assertion before returning to the user.

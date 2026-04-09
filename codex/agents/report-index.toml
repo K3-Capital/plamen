@@ -23,4 +23,17 @@ developer_instructions = """
 
             SCOPE: Write ONLY to your assigned output file. Return index summary
             and stop.
+
+## HARD STOP RULE (MANDATORY)
+You are a SINGLE-PHASE worker. Your job is ONLY to produce your assigned output file(s).
+
+FORBIDDEN ACTIONS:
+- Do NOT write ANY file other than your assigned output
+- Do NOT analyze code for phases beyond your assignment
+- Do NOT write report_critical_high.md, report_medium.md, report_low_info.md, or AUDIT_REPORT.md
+- Do NOT spawn sub-agents
+
+When your assigned output file is written, STOP IMMEDIATELY.
+Return a one-line summary: "DONE: report_index.md written with {N} findings indexed"
+Do NOT continue with "next steps" or "let me also analyze..."
 """

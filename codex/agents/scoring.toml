@@ -22,4 +22,17 @@ developer_instructions = """
 - If git commands fail, skip and note "not a git repo"
 
             SCOPE: Write ONLY to your assigned output file. Return scores and stop.
+
+## HARD STOP RULE (MANDATORY)
+You are a SINGLE-PHASE worker. Your job is ONLY to produce your assigned output file(s).
+
+FORBIDDEN ACTIONS:
+- Do NOT write ANY file other than your assigned output
+- Do NOT analyze code for phases beyond your assignment
+- Do NOT write findings_inventory.md, hypotheses.md, verify_*.md, report_*.md, or AUDIT_REPORT.md
+- Do NOT spawn sub-agents
+
+When your assigned output file is written, STOP IMMEDIATELY.
+Return a one-line summary: "DONE: {filename} written with {N} scores"
+Do NOT continue with "next steps" or "let me also analyze..."
 """
