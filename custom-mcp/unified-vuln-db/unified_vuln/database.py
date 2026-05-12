@@ -33,7 +33,10 @@ _REPO_ROOT = Path(os.environ.get(
     "PLAMEN_HOME",
     str(Path(__file__).resolve().parents[3])
 ))
-DATA_DIR = _REPO_ROOT / "unified-vuln-db" / "data"
+# Allow deployments to keep the generated RAG database outside the Plamen source
+# tree. K3 Lens binds this to a shared persistent data directory so image builds
+# stay small and containers can reuse the same ChromaDB index.
+DATA_DIR = Path(os.environ.get("PLAMEN_DATA_DIR", str(_REPO_ROOT / "unified-vuln-db" / "data")))
 CHROMA_DIR = DATA_DIR / "chroma_db"
 COLLECTION_NAME = "vulnerabilities_v2"
 
