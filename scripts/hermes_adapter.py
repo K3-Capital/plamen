@@ -64,6 +64,18 @@ def _adapt_codex_skill(codex_skill: str) -> str:
     3. If uncertain, use `search_files(target="files", pattern="phase_manifest.json")`
        or the terminal equivalent to find `{PLAMEN_HOME}/hooks/phase_manifest.json`.
 
+    Before starting an audit, run a dependency preflight and record the result in
+    `{PROJECT_ROOT}/.scratchpad/dependency_preflight.md` once the scratchpad path
+    is known. At minimum, check `python3`, `git`, `node`, `npx`, `forge`, `cast`,
+    `anvil`, and `slither` for EVM/Solidity targets. Treat Foundry and Slither as
+    required for EVM builds/static analysis; if either is missing, stop and ask for
+    the Hermes image or task environment to be fixed rather than silently skipping
+    build/static phases. `SOLODIT_API_KEY` is recommended for RAG/Solodit lookups;
+    if it is absent, mark RAG as unavailable and continue with code analysis plus
+    web-search fallback. Solana, Aptos, Sui, Medusa, Trident, and full MCP/RAG
+    database dependencies from `docs/setup.md` are optional or language-specific in
+    K3 Lens unless that audit target explicitly requires them.
+
     Hermes does not consume Codex agent TOML files directly. When this document
     says to spawn an agent from `{PLAMEN_HOME}/codex/agents/<role>.toml`, read
     that TOML as role guidance, then use Hermes `delegate_task` with the relevant
