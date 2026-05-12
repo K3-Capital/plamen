@@ -810,6 +810,11 @@ class VulnerabilityDB:
         except:
             pass
         self.collection = self._get_or_create_collection()
+        # The graph layer holds a collection handle. After deleting/recreating
+        # the Chroma collection during rebuild, refresh the graph handle too;
+        # otherwise stats/search paths can query the deleted collection ID and
+        # ChromaDB raises NotFoundError even though the new collection exists.
+        self.graph = GraphLiteLayer(self.collection)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
