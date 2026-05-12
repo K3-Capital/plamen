@@ -1,6 +1,6 @@
 # Plamen (v1.1.8)
 
-Autonomous smart contract security auditor for [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
+Autonomous smart contract security auditor for [Claude Code](https://docs.anthropic.com/en/docs/claude-code), with adapters for OpenAI Codex and Hermes/OpenAI Codex deployments.
 
 Orchestrates 18-100 AI agents across 8 phases to produce audit reports with verified PoC exploits.
 
@@ -66,8 +66,15 @@ Then use `plamen` from anywhere:
 plamen                              # interactive wizard
 plamen setup                        # install tools + build RAG
 plamen rag                          # rebuild RAG database only
+plamen install --codex              # install the Codex CLI adapter
 plamen uninstall                    # remove Plamen from ~/.claude
 ```
+
+For Hermes deployments (including K3 Lens), use the generated Hermes skill in
+`hermes/skills/plamen/` and install this repository as a deployment-managed
+submodule under the Hermes profile `skills/` directory. Do not run
+`plamen install --codex` inside K3 Lens task containers; the profile mount makes
+the skill available to Hermes directly.
 
 > **Important**: Always use `plamen` (not `python3 plamen.py`) after PATH is set. The `python3 plamen.py` form only works from inside `~/.plamen/`.
 
@@ -225,6 +232,8 @@ Language detection is automatic based on config files.
 | Pipeline architecture | [docs/architecture.md](docs/architecture.md) |
 | MCP servers & API keys | [docs/mcp-servers.md](docs/mcp-servers.md) |
 | Usage & CLI options | [docs/usage.md](docs/usage.md) |
+| Codex adapter | [codex/README.md](codex/README.md) |
+| Hermes adapter | [hermes/skills/plamen/README.md](hermes/skills/plamen/README.md) |
 | Skills, rules & internals | [docs/internals.md](docs/internals.md) |
 | Repository structure | [docs/repository-structure.md](docs/repository-structure.md) |
 | Automated setup (Claude) | [SETUP.md](SETUP.md) |
