@@ -149,6 +149,9 @@ plamen.bat rag      # Windows
 Or directly:
 
 ```bash
+# Optional: keep the generated ChromaDB outside the Plamen source tree so it can
+# be shared/bind-mounted between containers (K3 Lens uses data/plamen).
+export PLAMEN_DATA_DIR=/path/to/shared/plamen-rag-data
 python3 plamen.py rag   # macOS / Linux
 python plamen.py rag    # Windows
 ```

@@ -20,6 +20,26 @@ Before starting an audit, resolve `PLAMEN_HOME`:
 3. If uncertain, use `search_files(target="files", pattern="phase_manifest.json")`
    or the terminal equivalent to find `{PLAMEN_HOME}/hooks/phase_manifest.json`.
 
+Before starting an audit, run a dependency preflight and record the result in
+`{PROJECT_ROOT}/.scratchpad/dependency_preflight.md` once the scratchpad path
+is known. At minimum, check `python3`, `git`, `node`, `npx`, `uv`, `forge`,
+`cast`, `anvil`, and `slither` for EVM/Solidity targets. Treat Foundry and
+Slither as required for EVM builds/static analysis; if either is missing, stop
+and ask for the Hermes image or task environment to be fixed rather than
+silently skipping build/static phases.
+
+Core Solidity audits may use Plamen RAG, but RAG must not block the audit.
+If `PLAMEN_DATA_DIR` is set, use it as the shared vulnerability database
+directory; otherwise default to `{PLAMEN_HOME}/unified-vuln-db/data`. If a
+populated `{PLAMEN_DATA_DIR}/chroma_db` exists and the RAG Python dependencies
+are importable, mark RAG available. If the database or dependencies are absent,
+write `RAG: UNAVAILABLE` in the preflight and continue with code analysis plus
+web-search fallback. `SOLODIT_API_KEY` is recommended for generating/updating
+the RAG database and Solodit lookups; absence is not a blocker for core
+Solidity audits. Solana, Aptos, Sui, Medusa, and Trident from `docs/setup.md`
+are optional or language-specific in K3 Lens unless that audit target
+explicitly requires them.
+
 Hermes does not consume Codex agent TOML files directly. When this document
 says to spawn an agent from `{PLAMEN_HOME}/codex/agents/<role>.toml`, read
 that TOML as role guidance, then use Hermes `delegate_task` with the relevant
