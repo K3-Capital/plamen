@@ -619,6 +619,209 @@ def _codex_home_dir() -> Path:
     return Path.home() / ".codex"
 
 
+_RFC3339_TIMESTAMP_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$"
+)
+
+
+def _looks_like_rfc3339_timestamp(value: str) -> bool:
+    """Validate the timestamp grammar the pinned native serde accepts.
+
+    Native `last_refresh` deserializes through chrono's RFC 3339 parser;
+    a malformed value fails the auth-store load ("input contains invalid
+    characters"). Only syntax is checked here — age is deliberately NOT a
+    rejection criterion (native refresh handles stale sessions).
+    """
+    if not _RFC3339_TIMESTAMP_RE.match(value):
+        return False
+    try:
+        normalized = value.replace("z", "+00:00").replace("Z", "+00:00")
+        if normalized[10:11] == "t":
+            normalized = normalized[:10] + "T" + normalized[11:]
+        datetime.fromisoformat(normalized)
+    except ValueError:
+        return False
+    return True
+
+
+def _native_claims_usable(claims: dict) -> bool:
+    """Type-check the claims the pinned native IdClaims struct parses.
+
+    Native `parse_chatgpt_jwt_claims` deserializes the payload into
+    `IdClaims { email: Option<String>, "https://api.openai.com/profile":
+    Option<{email: Option<String>}>, "https://api.openai.com/auth":
+    Option<{chatgpt_plan_type: Option<String>, chatgpt_user_id /
+    user_id / chatgpt_account_id: Option<String>,
+    chatgpt_account_is_fedramp: bool}> }` with unknown fields ignored.
+    A wrong-typed known claim fails the native load — and serde then
+    echoes the offending value in the error text — so the preflight must
+    refuse it before any phase can reach the provider.
+    """
+    if not _optional_string_ok(claims.get("email")):
+        return False
+    profile = claims.get("https://api.openai.com/profile")
+    if profile is not None:
+        if not isinstance(profile, dict) or not _optional_string_ok(
+            profile.get("email")
+        ):
+            return False
+    auth = claims.get("https://api.openai.com/auth")
+    if auth is not None:
+        if not isinstance(auth, dict):
+            return False
+        for field in (
+            "chatgpt_plan_type", "chatgpt_user_id", "user_id",
+            "chatgpt_account_id",
+        ):
+            if not _optional_string_ok(auth.get(field)):
+                return False
+        if "chatgpt_account_is_fedramp" in auth:
+            fedramp = auth.get("chatgpt_account_is_fedramp")
+            # Native types this as `bool` (serde default false): null and
+            # any non-boolean value fail the load.
+            if not isinstance(fedramp, bool):
+                return False
+    return True
+
+
+def _optional_string_ok(value: object) -> bool:
+    """Native `Option<String>` field shape: absent/null or a string."""
+    return value is None or isinstance(value, str)
+
+
+def _walk_string_values(node: object, values: list[str]) -> None:
+    """Collect distinctive string leaves (used by _auth_record_string_values)."""
+    if isinstance(node, str):
+        if len(node) >= 12:
+            values.append(node)
+    elif isinstance(node, dict):
+        for child in node.values():
+            _walk_string_values(child, values)
+    elif isinstance(node, list):
+        for child in node:
+            _walk_string_values(child, values)
+
+
+_VALUE_BEARING_AUTH_RE = re.compile(
+    r"invalid\s+(?:type|value)\s*:|unknown\s+variant\b", re.IGNORECASE,
+)
+_AUTH_LOGS_REDACTED_MARKER = (
+    "[auth-store load error: diagnostic redacted by the Plamen driver]"
+)
+
+
+def _codex_cli_signal_line(line: str) -> str | None:
+    """Return the CLI-signal text of one Codex log line, or None for
+    untrusted audit content.
+
+    Codex JSONL mixes trusted CLI diagnostics with untrusted audit
+    content. `item.*` events (agent messages, command output) and
+    thread/turn progress events are audit/tool content that must never
+    classify as — or be sanitized like — an auth failure. Raw non-JSON
+    lines (CLI stderr) and `error` / `turn.failed` event payloads carry
+    the actual failure signal.
+    """
+    stripped = line.strip()
+    if not stripped.startswith("{"):
+        return line
+    try:
+        event = json.loads(stripped)
+    except Exception:
+        return line
+    if not isinstance(event, dict):
+        return line
+    etype = event.get("type")
+    if isinstance(etype, str):
+        if etype.startswith("item.") or "item" in event:
+            return None
+        if etype in ("thread.started", "turn.started", "turn.completed"):
+            return None
+        if etype == "error":
+            message = event.get("message")
+            return str(message) if message is not None else line
+        if etype == "turn.failed":
+            error = event.get("error")
+            if isinstance(error, dict) and error.get("message") is not None:
+                return str(error.get("message"))
+            return str(error) if error is not None else line
+    return line
+
+
+def _codex_cli_signal_text(log_path: Path) -> str:
+    """Join the CLI-signal lines of a Codex log (see
+    _codex_cli_signal_line). An unreadable log yields an empty string."""
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return "\n".join(
+        signal for signal in
+        (_codex_cli_signal_line(line) for line in text.splitlines())
+        if signal is not None
+    )
+
+
+def _auth_record_string_values() -> list[str]:
+    """Distinctive string leaves of the stored auth record (best effort)."""
+    auth_path = _codex_home_dir() / "auth.json"
+    try:
+        data = json.loads(auth_path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    values: list[str] = []
+    _walk_string_values(data, values)
+    return sorted(set(values))
+
+
+def _scrub_auth_value_diagnostics(paths: list[Path]) -> None:
+    """Remove value-bearing native auth diagnostics from persisted logs.
+
+    Native auth-store load errors can echo the offending record value
+    (e.g. serde `invalid type: string "<value>", expected a boolean`).
+    Signal lines matching a value-bearing family are replaced with a
+    fixed marker (which stays classifiable for permanent-auth handling);
+    distinctive record values are additionally redacted within signal
+    lines. Audit/tool content in `item.*` events is never rewritten.
+    """
+    values = _auth_record_string_values()
+    for path in paths:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if not text:
+            continue
+        if not _VALUE_BEARING_AUTH_RE.search(text) and not any(
+            value in text for value in values
+        ):
+            continue
+        out_lines: list[str] = []
+        changed = False
+        for line in text.split("\n"):
+            signal = _codex_cli_signal_line(line)
+            if signal is None:
+                out_lines.append(line)
+                continue
+            if _VALUE_BEARING_AUTH_RE.search(signal):
+                out_lines.append(_AUTH_LOGS_REDACTED_MARKER)
+                changed = True
+                continue
+            new_line = line
+            for value in values:
+                if value in new_line:
+                    new_line = new_line.replace(value, "[redacted]")
+            if new_line != line:
+                changed = True
+            out_lines.append(new_line)
+        if changed:
+            try:
+                path.write_text(
+                    "\n".join(out_lines), encoding="utf-8", errors="replace",
+                )
+            except OSError:
+                pass
+
+
 def _looks_like_native_id_token(value: object) -> bool:
     """Structurally mirror the native ID-token decode contract.
 
@@ -654,7 +857,11 @@ def _looks_like_native_id_token(value: object) -> bool:
         decoded = json.loads(raw.decode("utf-8"))
     except Exception:
         return False
-    return isinstance(decoded, dict)
+    if not isinstance(decoded, dict):
+        return False
+    # Known claim shapes must match what the native IdClaims struct parses
+    # (a wrong-typed known claim fails the native load).
+    return _native_claims_usable(decoded)
 
 
 def _codex_tokens_usable(tokens: object) -> bool:
@@ -714,10 +921,16 @@ def _codex_auth_record() -> "dict[str, object] | None":
         # Native serde rejects a wrong-typed API-key field outright.
         return None
     last_refresh = data.get("last_refresh")
-    if last_refresh is not None and not isinstance(last_refresh, str):
-        # Native serde parses last_refresh as a timestamp; a non-string,
-        # non-null value fails the load.
-        return None
+    if last_refresh is not None:
+        if not isinstance(last_refresh, str):
+            # Native serde parses last_refresh as a timestamp; a
+            # non-string, non-null value fails the load.
+            return None
+        if not _looks_like_rfc3339_timestamp(last_refresh):
+            # Native chrono rejects malformed timestamps ("input contains
+            # invalid characters"). Age is NOT a rejection criterion —
+            # native refresh handles legitimately stale sessions.
+            return None
     if mode is None:
         # Native legacy resolution mirrors Option::is_some() — an empty
         # string is still present and wins over tokens; only absent or
@@ -960,9 +1173,15 @@ def _detect_codex_auth_error(log_path: Path) -> bool:
     missing token fields, "Token data is not available") are permanent
     credential failures too, not retryable phase failures — as are serde/
     base64 load errors (position-anchored "invalid type/value: ... at line
-    N column M", "Invalid symbol N, offset M") and the forced-login
-    violation ("ChatGPT login is required, but an API key is currently
-    being used").
+    N column M", "Invalid symbol N, offset M", "input contains invalid
+    characters ...", the driver's own redacted load-error marker) and the
+    forced-login violation ("ChatGPT login is required, but an API key is
+    currently being used").
+
+    Only CLI-signal lines are classified (raw diagnostics and error/
+    turn.failed event payloads): audit/tool content inside `item.*` events
+    — agent messages or command output that merely quote native-shaped
+    diagnostics — must never trigger a permanent-auth abort.
 
     IMPORTANT: Call _detect_codex_model_not_available BEFORE this function.
     Model-not-available (404/403 for missing model access) would otherwise
@@ -973,11 +1192,18 @@ def _detect_codex_auth_error(log_path: Path) -> bool:
         text = log_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
+    if not text:
+        return False
     # Exclude model/capacity/rate-limit patterns from auth classification.
-    # Codex JSON logs include the full audit prompt and model transcript, so
-    # words like "Unauthorized" commonly appear as vulnerability text. Auth
-    # matching must be anchored to actual provider/CLI error fields.
     if _detect_codex_model_not_available(log_path) or _CODEX_RATE_LIMIT_RE.search(text):
+        return False
+    # Codex JSON logs include the full audit prompt and model transcript, so
+    # words like "Unauthorized" commonly appear as vulnerability text — and
+    # `item.*` events carry it verbatim. Classify only CLI-signal lines:
+    # raw diagnostics and error/turn.failed event payloads (see
+    # _codex_cli_signal_line).
+    text = _codex_cli_signal_text(log_path)
+    if not text:
         return False
     return bool(re.search(
         r"(?:status[=:\s]+401|HTTP\s+401"
@@ -991,6 +1217,8 @@ def _detect_codex_auth_error(log_path: Path) -> bool:
         r"|(?:(?:eof\s+while\s+parsing|expected\s+value|trailing\s+characters|key\s+must\s+be\s+a\s+string)[^\r\n]{0,60}at\s+line\s+\d+\s+column\s+\d+)"
         r"|(?:invalid\s+(?:symbol|last\s+symbol)\s+\d+,\s*offset\s+\d+)"
         r"|(?:invalid\s+input\s+length[^\r\n]{0,20}\d+)"
+        r"|(?:input\s+contains\s+invalid\s+characters[^\r\n]{0,60}at\s+line\s+\d+\s+column\s+\d+)"
+        r"|(?:auth[\s-]store\s+load\s+error)"
         r"|(?:chatgpt\s+login\s+is\s+required[^\r\n]{0,80}api\s+key))",
         text, re.IGNORECASE,
     ))
@@ -2029,6 +2257,14 @@ def _run_verify_recovery_shard(
             "is disabled for Plamen. This is a permanent failure."
         )
 
+    if codex_backend:
+        # Value-bearing native auth diagnostics must not persist in the
+        # recovery attempt logs either (same hygiene as ordinary phases).
+        _scrub_auth_value_diagnostics([
+            scratchpad / "_stdio_verify_recovery.attempt1.log",
+            scratchpad / "_stdio_verify_recovery.attempt2.log",
+        ])
+
     elapsed = time.monotonic() - start
     log.info(f"[verify_recovery] completed in {elapsed:.0f}s")
 
@@ -2695,6 +2931,18 @@ def run_phase(phase: Phase, config: dict, attempt: int) -> int:
         canonical.write_bytes(log_path.read_bytes())
     except Exception:
         pass
+
+    # Subscription-only hygiene (KCA-727): value-bearing native auth
+    # diagnostics (serde type/value errors echo the offending record
+    # value) must not persist in the attempt or canonical logs. Scrubbed
+    # lines are replaced with a marker that stays classifiable for the
+    # permanent-auth handling downstream.
+    if backend == "codex":
+        _scrub_auth_value_diagnostics(
+            [canonical] + sorted(
+                scratchpad.glob(f"_stdio_{phase.name}.attempt*.log")
+            )
+        )
 
     duration = time.time() - start
     log.info(f"[{phase.name}] subprocess exited rc={rc} after {duration:.0f}s")
