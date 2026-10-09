@@ -3561,6 +3561,37 @@ def _purge_scratchpad(scratchpad: Path, config: dict) -> None:
             pass
 
 
+# K3 deployment delta (KCA-727): the phase budgets in this revision
+# (notably `breadth` at 10800s for SC and L1) exceed the 2-hour ceiling
+# enforced by `validate_phase_graph`, which aborts every run at startup
+# with EXIT_DEGRADED. The accepted K3 deployment clamps the in-flight
+# phase objects to 2 hours (same semantics as the removed
+# `k3-plamen-runner` launcher clamp); the phase sequencer, artifacts and
+# gates are unchanged.
+# Removal condition: re-pin to a revision where the validator accepts the
+# configured phase budgets (later upstream revisions raise the bound to
+# 4 hours) and the deployment re-approves the longer per-phase allowance.
+_PHASE_TIMEOUT_CEILING_S = 7200
+
+
+def clamp_phase_timeouts(
+    ceiling: int = _PHASE_TIMEOUT_CEILING_S,
+) -> list[tuple[str, int, int]]:
+    """Clamp per-phase `base_timeout_s` to *ceiling* (K3 deployment delta).
+
+    Returns the (phase_name, previous_timeout, clamped_timeout) adjustments
+    so callers and tests can report exactly what changed.
+    """
+    adjusted: list[tuple[str, int, int]] = []
+    for phases in (SC_PHASES, L1_PHASES):
+        for phase in phases:
+            timeout = getattr(phase, "base_timeout_s", 0)
+            if isinstance(timeout, (int, float)) and timeout > ceiling:
+                phase.base_timeout_s = ceiling
+                adjusted.append((getattr(phase, "name", "?"), int(timeout), ceiling))
+    return adjusted
+
+
 def main():
     # Terminal: WARNING+ only (keep TUI clean).
     # File: everything (INFO+) for debugging via `tail -f _plamen.log`.
@@ -3698,6 +3729,10 @@ def main():
 
     phases = L1_PHASES if config["pipeline"] == "l1" else SC_PHASES
     mode = config["mode"]
+
+    # K3 deployment delta (KCA-727): clamp per-phase budgets to the reviewed
+    # 2-hour per-phase ceiling before validation (see clamp_phase_timeouts).
+    clamp_phase_timeouts()
 
     # Phase-graph startup validation. Closes the architectural defect where a
     # mode/language combination could ship a broken phase list (duplicate

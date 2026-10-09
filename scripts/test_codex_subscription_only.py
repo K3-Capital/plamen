@@ -11,6 +11,8 @@ Covers the driver's subscription-only enforcement:
     scrubbed from every phase subprocess environment)
   - _build_codex_cmd / _build_codex_cmd_no_model carry the forced-login
     -c overrides even though phase invocations use --ignore-user-config
+  - clamp_phase_timeouts (K3 deployment delta: the pinned revision's phase
+    budgets exceed the validator ceiling and would abort every run)
 
 Run: `python test_codex_subscription_only.py` or `pytest scripts/`.
 """
@@ -276,6 +278,35 @@ def test_S9_fake_codex_launch_scrubbed_env_and_flags():
           str(payload["argv"]))
 
 
+def test_S10_phase_timeout_clamp_restores_runnability():
+    """K3 deployment delta: clamping makes every (mode, pipeline) graph
+    validate; originals are restored so the fixture never leaks state."""
+    originals = [
+        (phase, phase.base_timeout_s)
+        for phase in list(D.SC_PHASES) + list(D.L1_PHASES)
+    ]
+    try:
+        adjusted = D.clamp_phase_timeouts()
+        for phases, pipeline in ((D.SC_PHASES, "sc"), (D.L1_PHASES, "l1")):
+            max_timeout = max(p.base_timeout_s for p in phases)
+            check(f"S10a {pipeline}: all phases <= ceiling after clamp",
+                  max_timeout <= D._PHASE_TIMEOUT_CEILING_S,
+                  f"max={max_timeout}")
+            for mode in ("light", "core", "thorough"):
+                issues = D.validate_phase_graph(phases, mode, pipeline)
+                check(f"S10b {pipeline}/{mode}: graph valid after clamp",
+                      not issues, repr(issues[:2]))
+        clamp_names = sorted(name for name, _, _ in adjusted)
+        check("S10c breadth was among the clamped phases",
+              "breadth" in clamp_names, repr(clamp_names))
+        again = D.clamp_phase_timeouts()
+        check("S10d clamp is idempotent (second pass adjusts nothing)",
+              again == [], repr(again))
+    finally:
+        for phase, timeout in originals:
+            phase.base_timeout_s = timeout
+
+
 def main() -> None:
     tests = [
         test_S1_chatgpt_file_in_codex_home_is_accepted,
@@ -287,6 +318,7 @@ def main() -> None:
         test_S7_phase_env_scrubs_api_keys,
         test_S8_cmd_builders_force_subscription_login,
         test_S9_fake_codex_launch_scrubbed_env_and_flags,
+        test_S10_phase_timeout_clamp_restores_runnability,
     ]
     print(f"Running {len(tests)} subscription-only Codex tests...")
     for t in tests:
