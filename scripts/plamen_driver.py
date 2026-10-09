@@ -605,36 +605,89 @@ def _codex_prompt_fits(prompt: str, model: str) -> bool:
     return estimated_tokens <= effective_limit
 
 
-def _codex_auth_available() -> bool:
-    """Check if Codex authentication is available (OAuth or API key).
+def _codex_home_dir() -> Path:
+    """Resolve the Codex home directory used for auth and configuration.
 
-    Without auth, `codex exec` will attempt interactive browser login,
-    hanging indefinitely in a subprocess with no TTY.
+    `codex exec` loads credentials from `$CODEX_HOME/auth.json` (and still
+    does so under `--ignore-user-config`), so the preflight must resolve the
+    same location instead of assuming `~/.codex`.
     """
-    if os.environ.get("CODEX_API_KEY") or os.environ.get("OPENAI_API_KEY"):
-        return True
-    auth_path = Path.home() / ".codex" / "auth.json"
-    return auth_path.exists()
+    raw = os.environ.get("CODEX_HOME", "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".codex"
+
+
+def _codex_auth_available() -> bool:
+    """Check that ChatGPT-subscription OAuth is available for `codex exec`.
+
+    Subscription-only policy: API-key environment variables
+    (`CODEX_API_KEY` / `OPENAI_API_KEY`) are NOT an accepted authentication
+    source for Plamen audits. `codex exec` gives `CODEX_API_KEY` precedence
+    over any stored OAuth session, so an inherited key must fail this
+    preflight — and is scrubbed from the phase environment below — instead
+    of silently switching the audit to API-key billing.
+
+    Without usable auth, `codex exec` sends unauthenticated provider
+    requests and fails with retry/401 noise (or attempts interactive login
+    under a TTY), so this preflight fails the phase clearly and early.
+    """
+    return _codex_auth_is_chatgpt()
 
 
 def _codex_auth_is_chatgpt() -> bool:
-    """Return True if Codex is authenticated via ChatGPT OAuth (not API key).
+    """Return True when the Codex auth store holds a ChatGPT OAuth session.
 
-    ChatGPT-auth accounts cannot use `--model` flag — the server rejects ALL
-    explicit model names with "not supported when using Codex with a ChatGPT
-    account". The account's subscription tier determines the default model
-    automatically (Pro → GPT-5, Plus → GPT-4.1, etc).
+    ChatGPT-auth accounts cannot use the `--model` flag — the server rejects
+    all explicit model names with "not supported when using Codex with a
+    ChatGPT account"; the subscription tier determines the default model.
+    Only the stored auth file decides this: API-key environment variables
+    are not consulted (subscription-only policy).
     """
-    if os.environ.get("CODEX_API_KEY") or os.environ.get("OPENAI_API_KEY"):
-        return False
-    auth_path = Path.home() / ".codex" / "auth.json"
+    auth_path = _codex_home_dir() / "auth.json"
     if not auth_path.exists():
         return False
     try:
         data = json.loads(auth_path.read_text(encoding="utf-8"))
-        return data.get("auth_mode") == "chatgpt"
     except Exception:
         return False
+    return isinstance(data, dict) and data.get("auth_mode") == "chatgpt"
+
+
+# Subscription-only policy for every `codex exec` phase invocation.
+#
+# Both builders pass `--ignore-user-config`, so `$CODEX_HOME/config.toml`
+# is not loaded for phase runs; the restriction must ride on the command
+# line. `forced_login_method="chatgpt"` makes `codex exec` refuse (and log
+# out) any API-key auth instead of falling back to it;
+# `cli_auth_credentials_store="file"` pins the credential backend to the
+# reviewed single-file store.
+_CODEX_SUBSCRIPTION_ONLY_ARGS = [
+    "-c", 'forced_login_method="chatgpt"',
+    "-c", 'cli_auth_credentials_store="file"',
+]
+
+
+def _phase_subprocess_env(scratchpad: Path) -> dict[str, str]:
+    """Build the environment for a phase subprocess (claude or codex).
+
+    Subscription-only policy: inherited `CODEX_API_KEY` / `OPENAI_API_KEY`
+    must never reach a Codex phase. Inside `codex exec`, `CODEX_API_KEY`
+    takes precedence over the stored ChatGPT session — it would silently
+    select API-key billing, and under a forced ChatGPT login the violation
+    even deletes the shared auth file. Scrub both names unconditionally.
+    """
+    env = {
+        **os.environ,
+        "ANTHROPIC_DISABLE_AUTOUPDATE": "1",
+        # Protect nested Claude Code alias resolution too: if a prompt or
+        # Task uses bare `opus`, keep it on the pinned Opus version.
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": PLAMEN_OPUS_MODEL,
+        "PLAMEN_SCRATCHPAD": str(scratchpad),
+    }
+    for name in ("CODEX_API_KEY", "OPENAI_API_KEY"):
+        env.pop(name, None)
+    return env
 
 
 def _build_codex_cmd(effective_model: str, *, needs_mcp: bool = False,
@@ -673,6 +726,7 @@ def _build_codex_cmd(effective_model: str, *, needs_mcp: bool = False,
         "--ignore-user-config",
         "--ignore-rules",
     ])
+    cmd.extend(_CODEX_SUBSCRIPTION_ONLY_ARGS)
     if writable_dirs:
         for d in writable_dirs:
             cmd.extend(["--add-dir", d])
@@ -762,6 +816,7 @@ def _build_codex_cmd_no_model(*, needs_mcp: bool = False,
         "--skip-git-repo-check",
         "--ignore-user-config",
         "--ignore-rules",
+        *_CODEX_SUBSCRIPTION_ONLY_ARGS,
     ]
     if writable_dirs:
         for d in writable_dirs:
@@ -2128,9 +2183,10 @@ def run_phase(phase: Phase, config: dict, attempt: int) -> int:
             return EXIT_ERROR
         if not _codex_auth_available():
             log.error(
-                f"[{phase.name}] Codex auth not found — `codex exec` will hang "
-                f"waiting for interactive login. Run `codex login` first, or set "
-                f"CODEX_API_KEY / OPENAI_API_KEY."
+                f"[{phase.name}] Codex subscription OAuth not available — "
+                f"`codex exec` cannot start. API-key fallback is disabled for "
+                f"Plamen; verify a valid ChatGPT login at $CODEX_HOME/auth.json "
+                f"(run `codex login` for the deployment Codex home)."
             )
             return EXIT_ERROR
         if not _codex_prompt_fits(prompt, effective_model):
@@ -2329,14 +2385,10 @@ def run_phase(phase: Phase, config: dict, attempt: int) -> int:
     #   doing filesystem I/O + JSON parse on every Task spawn. Saves
     #   ~100-500ms per agent dispatch on Windows; on a 20-agent depth
     #   phase that is several seconds of measurable overhead removed.
-    subprocess_env = {
-        **os.environ,
-        "ANTHROPIC_DISABLE_AUTOUPDATE": "1",
-        # Protect nested Claude Code alias resolution too: if a prompt or
-        # Task uses bare `opus`, keep it on the pinned Opus version.
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": PLAMEN_OPUS_MODEL,
-        "PLAMEN_SCRATCHPAD": str(scratchpad),
-    }
+    # Subscription-only policy: `_phase_subprocess_env` also scrubs inherited
+    # CODEX_API_KEY / OPENAI_API_KEY so a Codex phase can never select
+    # API-key billing over the stored ChatGPT session.
+    subprocess_env = _phase_subprocess_env(scratchpad)
     # On Windows, claude.cmd is a batch file; Popen without
     # CREATE_NO_WINDOW spawns a visible console per subprocess.
     popen_kwargs: dict[str, Any] = {}
@@ -5116,9 +5168,10 @@ def main():
             if _detect_codex_auth_error(_stdio_crash_log):
                 log.error(
                     f"[{phase.name}] Codex authentication error (401/403 or "
-                    f"expired token). Re-run `codex login` or refresh "
-                    f"CODEX_API_KEY / OPENAI_API_KEY. This is a permanent "
-                    f"failure — retrying with stale credentials is pointless."
+                    f"expired token). Re-run `codex login` for the deployment "
+                    f"Codex home ($CODEX_HOME); API-key fallback is disabled "
+                    f"for Plamen. This is a permanent failure — retrying with "
+                    f"stale credentials is pointless."
                 )
                 checkpoint.save(scratchpad)
                 sys.exit(EXIT_ERROR)
