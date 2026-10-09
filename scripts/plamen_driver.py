@@ -966,25 +966,90 @@ def _stream_sanitized_log(stream, log_file, values: list[str]) -> None:
         pass
 
 
+# Bounded settle before escalating an owned pipeline whose reader is still
+# alive after the leader's exit: descendants may still hold the pipe.
+_PIPE_SETTLE_SECONDS = 2.0
+
+# The driver runs one owned pipeline at a time (phases are sequential).
+# The handle is kept through finalization so cleanup can reach the owned
+# group even from interruption paths that do not carry the Popen object.
+_ACTIVE_OWNED_PROC: "Optional[subprocess.Popen]" = None
+
+
+def _get_active_owned_proc() -> "Optional[subprocess.Popen]":
+    """The owned process handle for the pipeline currently finalizing."""
+    return _ACTIVE_OWNED_PROC
+
+
+def _clear_active_owned_proc(proc: "Optional[subprocess.Popen]" = None) -> None:
+    """Drop the owned-pipeline handle (only if it still names *proc*)."""
+    global _ACTIVE_OWNED_PROC
+    if proc is None or _ACTIVE_OWNED_PROC is proc:
+        _ACTIVE_OWNED_PROC = None
+
+
 def _drain_pipe_reader(
     reader: "Optional[threading.Thread]", stream_stdout,
 ) -> None:
-    """Join the sanitized-log reader and close its pipe without blocking.
+    """Complete owned-pipeline finalization: reader finished, stream closed.
 
-    The reader reaches EOF — and this helper returns promptly — only once
-    the owned child is gone, so cancellation handlers terminate the child
-    tree first. Closing is skipped while the reader is somehow still alive
-    so cleanup can never block on a half-dead pipe.
+    1. Bounded settle: join the reader; a reader still alive after the
+       leader's exit means owned writers (same-group descendants) still
+       hold the pipe.
+    2. Complete bounded owned-group cleanup through the retained ownership
+       handle (TERM, escalate to KILL) so the pipe reaches EOF. An
+       interruption during the settle makes the reader's thread-liveness
+       state unreliable (CPython marks the interrupted join as stopped),
+       so group cleanup then runs unconditionally.
+    3. Prove the reader is finished and close its stream — before
+       returning or propagating an interruption (a timed join with a
+       skipped close is not successful finalization).
     """
+    interrupted = None
     if reader is not None:
-        reader.join(timeout=10)
-    if stream_stdout is not None and (
-        reader is None or not reader.is_alive()
-    ):
+        try:
+            reader.join(timeout=_PIPE_SETTLE_SECONDS)
+        except BaseException as exc:
+            interrupted = exc
+    reader_live = False
+    if reader is not None:
+        try:
+            reader_live = reader.is_alive()
+        except Exception:
+            reader_live = True
+    if reader is not None and (reader_live or interrupted is not None):
+        # Owned writers still hold the pipe (or the interrupted join left
+        # the reader's liveness tracking unusable): finish group cleanup
+        # first so the pipe reaches EOF.
+        proc = _get_active_owned_proc()
+        try:
+            if proc is not None:
+                _terminate_process_tree(proc, grace_s=10)
+        except BaseException as exc:
+            if interrupted is None:
+                interrupted = exc
+        try:
+            reader.join(timeout=10.0)
+        except BaseException as exc:
+            if interrupted is None:
+                interrupted = exc
+    if stream_stdout is not None and not getattr(stream_stdout, "closed", False):
         try:
             stream_stdout.close()
-        except Exception:
-            pass
+        except BaseException as exc:
+            if interrupted is None:
+                interrupted = exc
+    if reader is not None and reader.is_alive():
+        # The owned group is gone by contract, so only buffered data
+        # remains; give the reader one last bounded grace so no live
+        # reader is ever left behind.
+        try:
+            reader.join(timeout=5.0)
+        except BaseException as exc:
+            if interrupted is None:
+                interrupted = exc
+    if interrupted is not None:
+        raise interrupted
 
 
 def _looks_like_native_id_token(value: object) -> bool:
@@ -1710,10 +1775,51 @@ def _parse_codex_output(log_path: Path, model: str = "") -> dict:
 
 # ── Process management ────────────────────────────────────────────────────
 
-def _terminate_process_tree(proc: subprocess.Popen, grace_s: float = 5.0) -> None:
-    """Terminate a phase subprocess and its children best-effort."""
-    if proc.poll() is not None:
-        return
+def _mark_owned_child(proc: subprocess.Popen, popen_kwargs: dict) -> None:
+    """Record that *proc* leads its own process group (start_new_session).
+
+    Cleanup then proves *group* completion — a same-group descendant can
+    outlive the leader and keep inherited pipes open, so the leader's exit
+    alone is never tree-completion evidence. The handle is also kept for
+    the silent-finalization paths (see `_drain_pipe_reader`)."""
+    global _ACTIVE_OWNED_PROC
+    if sys.platform != "win32" and popen_kwargs.get("start_new_session"):
+        proc.plamen_owned_pgid = proc.pid
+    else:
+        proc.plamen_owned_pgid = None
+    _ACTIVE_OWNED_PROC = proc
+
+
+def _owned_group_alive(pgid: int) -> bool:
+    """Bounded owned-group probe: ESRCH from killpg(0) means gone."""
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _reap_owned_leader(proc: subprocess.Popen) -> None:
+    """Bounded reaping of the owned leader — its exit is not tree evidence."""
+    try:
+        proc.wait(timeout=2.0)
+    except Exception:
+        pass
+
+
+def _terminate_process_tree(proc: subprocess.Popen, grace_s: float = 5.0) -> bool:
+    """Bounded owned-process cleanup; True once the whole tree is gone.
+
+    POSIX children are spawned as session/group leaders, so completion
+    means *the group is empty* — never merely the leader's exit (a
+    descendant can outlive the leader and keep the pipes open). SIGTERM
+    the group, escalate to SIGKILL while any member remains, and only
+    then report success. Windows stays a best-effort taskkill path.
+    """
+    if proc is None:
+        return True
     if sys.platform == "win32":
         try:
             subprocess.run(
@@ -1732,31 +1838,61 @@ def _terminate_process_tree(proc: subprocess.Popen, grace_s: float = 5.0) -> Non
             proc.wait(timeout=grace_s)
         except Exception:
             pass
-        return
+        return proc.poll() is not None
 
-    try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except Exception:
+    pgid = getattr(proc, "plamen_owned_pgid", None)
+    if pgid is None:
+        # Fallback: honor an actual own group if the child leads one.
+        try:
+            if os.getpgid(proc.pid) == proc.pid:
+                pgid = proc.pid
+        except (ProcessLookupError, PermissionError, OSError):
+            pgid = None
+
+    if pgid is None:
+        # No owned group: single-process, bounded.
         try:
             proc.terminate()
         except Exception:
             pass
-    try:
-        proc.wait(timeout=grace_s)
-        return
-    except Exception:
-        pass
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except Exception:
+        try:
+            proc.wait(timeout=grace_s)
+            return True
+        except Exception:
+            pass
         try:
             proc.kill()
         except Exception:
             pass
+        _reap_owned_leader(proc)
+        return proc.poll() is not None
+
+    if not _owned_group_alive(pgid):
+        _reap_owned_leader(proc)
+        return True
     try:
-        proc.wait(timeout=grace_s)
+        os.killpg(pgid, signal.SIGTERM)
+    except ProcessLookupError:
+        _reap_owned_leader(proc)
+        return True
     except Exception:
         pass
+    _reap_owned_leader(proc)
+    deadline = time.monotonic() + max(0.0, grace_s)
+    while time.monotonic() < deadline and _owned_group_alive(pgid):
+        time.sleep(0.02)
+    if _owned_group_alive(pgid):
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except Exception:
+            pass
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and _owned_group_alive(pgid):
+            time.sleep(0.02)
+    _reap_owned_leader(proc)
+    return not _owned_group_alive(pgid)
 
 
 def _reconcile_completed_checkpoint_artifacts(
@@ -2223,6 +2359,7 @@ def _run_recovery_attempt(
                     env=subprocess_env,
                     **popen_kwargs,
                 )
+                _mark_owned_child(proc, popen_kwargs)
                 stream_stdout = proc.stdout
                 stream_reader = threading.Thread(
                     target=_stream_sanitized_log,
@@ -2239,6 +2376,7 @@ def _run_recovery_attempt(
                     env=subprocess_env,
                     **popen_kwargs,
                 )
+                _mark_owned_child(proc, popen_kwargs)
         except Exception as e:
             log.warning(f"[verify_recovery] Popen failed: {e}")
             return False
@@ -2254,7 +2392,18 @@ def _run_recovery_attempt(
             _terminate_process_tree(proc, grace_s=5)
             raise
         finally:
-            _drain_pipe_reader(stream_reader, stream_stdout)
+            # Owned-pipeline finalization: complete the reader/pipe cleanup
+            # (killing remaining owned writers when needed), then the
+            # bounded owned-group completion, then drop the ownership
+            # handle. This runs before returning or re-propagating an
+            # interruption — including one raised during finalization.
+            try:
+                _drain_pipe_reader(stream_reader, stream_stdout)
+            finally:
+                try:
+                    _terminate_process_tree(proc, grace_s=10)
+                finally:
+                    _clear_active_owned_proc(proc)
     return True
 
 
@@ -2691,7 +2840,9 @@ def _wait_with_heartbeat(
             pass
         except KeyboardInterrupt:
             display._clear_spinner()
-            _terminate_process_tree(proc, grace_s=10)
+            # Cancel is urgent: bounded TERM window, then group KILL —
+            # the whole owned group must be gone before this propagates.
+            _terminate_process_tree(proc, grace_s=5)
             raise
 
         # Esc halt: terminate subprocess, return -3 so driver can offer resume
@@ -3146,6 +3297,7 @@ def run_phase(phase: Phase, config: dict, attempt: int) -> int:
                     env=subprocess_env,
                     **popen_kwargs,
                 )
+                _mark_owned_child(proc, popen_kwargs)
                 stream_stdout = proc.stdout
                 stream_reader = threading.Thread(
                     target=_stream_sanitized_log,
@@ -3162,6 +3314,7 @@ def run_phase(phase: Phase, config: dict, attempt: int) -> int:
                     env=subprocess_env,
                     **popen_kwargs,
                 )
+                _mark_owned_child(proc, popen_kwargs)
         except Exception as e:
             log.error(f"[{phase.name}] Popen failed: {e}")
             try:
@@ -3201,7 +3354,18 @@ def run_phase(phase: Phase, config: dict, attempt: int) -> int:
             _terminate_process_tree(proc, grace_s=5)
             raise
         finally:
-            _drain_pipe_reader(stream_reader, stream_stdout)
+            # Owned-pipeline finalization: complete the reader/pipe cleanup
+            # (killing remaining owned writers when needed), then the
+            # bounded owned-group completion, then drop the ownership
+            # handle. This runs before returning or re-propagating an
+            # interruption — including one raised during finalization.
+            try:
+                _drain_pipe_reader(stream_reader, stream_stdout)
+            finally:
+                try:
+                    _terminate_process_tree(proc, grace_s=10)
+                finally:
+                    _clear_active_owned_proc(proc)
 
     # Copy to canonical so detect_rate_limit finds latest
     try:

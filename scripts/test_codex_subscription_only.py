@@ -41,7 +41,12 @@ Covers the driver's subscription-only enforcement:
     duplicates of unknown fields stay ignored.
   - Cancellation safety: SIGINT during a phase or recovery attempt
     stops/reaps the owned child tree, completes promptly, propagates the
-    interruption, and never leaves raw values in the logs.
+    interruption, and never leaves raw values in the logs. Owned
+    same-group descendants are tracked through finalization: a
+    SIGTERM-resistant tool is escalated and reaped, a stdout-retaining
+    descendant is cleaned after a normal leader exit, the reader is
+    proven finished and its stream closed, and an interruption during
+    finalization still completes the same cleanup before propagating.
   - _run_verify_recovery_shard: a Codex-mode recovery shard uses the same
     hardened auth check, prompt translation, command builder, model retry
     and scrubbed environment as ordinary phases; Claude-mode behavior is
@@ -1634,6 +1639,177 @@ except KeyboardInterrupt:
               marker not in text and "auth-store load error" in text, "")
 
 
+def test_S38_owned_descendant_lifecycle_and_finalizer_interrupt():
+    """Owned same-group descendants: SIGINT escalation reaps a SIGTERM-
+    resistant tool, a stdout-retaining tool is cleaned after a normal
+    leader exit, and an interruption during finalization still completes
+    cleanup before propagating."""
+    marker = _S30_MARKER
+    scripts_dir = Path(__file__).resolve().parent
+    worker_src = """
+import json, os, pathlib, sys
+case = pathlib.Path(sys.argv[1]); mode = sys.argv[2]
+sys.path.insert(0, %r)
+import plamen_driver as D
+import test_codex_subscription_only as T
+home = case / 'auth'
+T._write_auth(home, {'auth_mode': 'chatgpt', 'tokens': T._tokens(access_token=%r)})
+os.environ['CODEX_HOME'] = str(home)
+os.environ['PLAMEN_PLAIN_OUTPUT'] = '1'
+D.CODEX_BIN = str(case / 'fake_provider.py')
+(case / 'prompt.txt').write_text('Synthetic prompt only.')
+original_drain = D._drain_pipe_reader
+def observe_drain(reader, stream):
+    (case / 'drain_entered').write_text('entered')
+    try:
+        original_drain(reader, stream)
+    except BaseException:
+        raise
+    (case / 'reader_state.json').write_text(json.dumps({
+        'reader_alive_after_finalizer': reader is not None and reader.is_alive(),
+        'stream_closed_after_finalizer': stream is None or stream.closed,
+    }))
+D._drain_pipe_reader = observe_drain
+try:
+    phase = next(p for p in D.SC_PHASES if p.name == 'recon')
+    D.run_phase(phase, {'scratchpad': str(case/'scratch'),
+                        'project_root': str(case/'project'),
+                        'pipeline': 'sc', 'language': 'solidity',
+                        'mode': 'light', 'cli_backend': 'codex'}, 1)
+except KeyboardInterrupt:
+    print('REVIEW_SIGINT_PROPAGATED', flush=True)
+    sys.exit(130)
+print('REVIEW_PHASE_COMPLETED', flush=True)
+sys.exit(0)
+""" % (str(scripts_dir), marker)
+    tool_src = (
+        "import json, os, pathlib, signal, sys, time\n"
+        "if sys.argv[1] == 'resistant':\n"
+        "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "case = pathlib.Path(sys.argv[2])\n"
+        "(case / 'descendant.json').write_text(json.dumps("
+        "{'pid': os.getpid(), 'pgid': os.getpgrp()}))\n"
+        "deadline = time.monotonic() + 120\n"
+        "while time.monotonic() < deadline:\n"
+        "    if (case / 'driver_returned').exists():\n"
+        "        (case / 'scratch' / 'post_return_tool_write.txt').write_text('x')\n"
+        "    time.sleep(0.02)\n"
+    )
+    cases = (
+        ("resistant", "sigint_live_resistant_descendant"),
+        ("linger", "normal_leader_exit_stdout_retained"),
+        ("linger", "sigint_after_leader_exit_stdout_retained"),
+    )
+    for variant, scenario in cases:
+        case = _mkfix(f"desc_{scenario}_{variant}")
+        (case / "scratch").mkdir()
+        (case / "project").mkdir()
+        tool = case / "synthetic_tool.py"
+        tool.write_text(tool_src, encoding="utf-8")
+        provider = case / "fake_provider.py"
+        provider.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, os, pathlib, subprocess, sys, time\n"
+            "case = pathlib.Path(%r)\n"
+            "(case / 'provider.json').write_text(json.dumps("
+            "{'pid': os.getpid(), 'pgid': os.getpgrp()}))\n"
+            "subprocess.Popen([sys.executable, str(case / 'synthetic_tool.py'),"
+            " %r, str(case)])\n"
+            "deadline = time.monotonic() + 10\n"
+            "while not (case / 'descendant.json').exists() and "
+            "time.monotonic() < deadline:\n"
+            "    time.sleep(0.01)\n"
+            "print(%r, flush=True)\n"
+            "%s\n" % (
+                str(case), variant,
+                'invalid type: string "%s", expected a boolean at line 1 column 94' % marker,
+                "time.sleep(120)" if variant == "resistant" else "sys.exit(0)",
+            ),
+            encoding="utf-8",
+        )
+        provider.chmod(provider.stat().st_mode | stat.S_IXUSR)
+        worker = case / "worker.py"
+        worker.write_text(worker_src, encoding="utf-8")
+        env = {**os.environ, "PLAMEN_HOME": str(scripts_dir.parent)}
+        driver = subprocess.Popen(
+            [sys.executable, str(worker), str(case), variant],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            env=env, start_new_session=True,
+        )
+        log = case / "scratch" / "_stdio_recon.attempt1.log"
+        provider_pid = descendant_pid = pgid = None
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if (case / "provider.json").exists():
+                meta = json.loads((case / "provider.json").read_text())
+                provider_pid, pgid = meta["pid"], meta["pgid"]
+            if (case / "descendant.json").exists():
+                descendant_pid = json.loads(
+                    (case / "descendant.json").read_text()
+                )["pid"]
+            if provider_pid and descendant_pid and log.exists() and log.stat().st_size:
+                break
+            time.sleep(0.02)
+        check(f"S38 {scenario}: control ready",
+              bool(provider_pid and descendant_pid), "")
+
+        def _running(pid):
+            try:
+                stat_text = Path(f"/proc/{pid}/stat").read_text()
+            except FileNotFoundError:
+                return False
+            return stat_text[stat_text.rfind(")") + 2:].split()[0] not in {"Z", "X"}
+
+        start = time.monotonic()
+        try:
+            if "sigint_after" in scenario:
+                wait_deadline = time.monotonic() + 5
+                while time.monotonic() < wait_deadline and (
+                    _running(provider_pid) or not (case / "drain_entered").exists()
+                ):
+                    time.sleep(0.02)
+                os.kill(driver.pid, signal.SIGINT)
+            elif variant == "resistant":
+                os.kill(driver.pid, signal.SIGINT)
+            out, _ = driver.communicate(timeout=15)
+            finished = True
+        except subprocess.TimeoutExpired:
+            finished = False
+            out = ""
+            os.killpg(driver.pid, signal.SIGKILL)
+            driver.communicate(timeout=5)
+        elapsed = time.monotonic() - start
+        tool_dead = descendant_pid is not None and not _running(descendant_pid)
+        if not tool_dead and pgid is not None:
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        post_write = (case / "scratch" / "post_return_tool_write.txt").exists()
+        log_text = log.read_text(encoding="utf-8", errors="replace")
+        state_file = case / "reader_state.json"
+        state = json.loads(state_file.read_text()) if state_file.exists() else None
+        check(f"S38 {scenario}: driver completed promptly",
+              finished and elapsed < 15, f"finished={finished} elapsed={elapsed:.2f}")
+        check(f"S38 {scenario}: owned tool reaped before return", tool_dead, "")
+        check(f"S38 {scenario}: no post-return scratch write", not post_write, "")
+        check(f"S38 {scenario}: log sanitized",
+              marker not in log_text and "auth-store load error" in log_text, "")
+        if "sigint" in scenario:
+            check(f"S38 {scenario}: interruption propagated (rc 130)",
+                  driver.returncode == 130 and "REVIEW_SIGINT_PROPAGATED" in out,
+                  f"rc={driver.returncode}")
+        else:
+            check(f"S38 {scenario}: normal completion rc 0",
+                  driver.returncode == 0 and "REVIEW_PHASE_COMPLETED" in out,
+                  f"rc={driver.returncode}")
+        if state is not None:
+            check(f"S38 {scenario}: reader finished",
+                  not state["reader_alive_after_finalizer"], "")
+            check(f"S38 {scenario}: stream closed",
+                  state["stream_closed_after_finalizer"], "")
+
+
 def main() -> None:
     tests = [
         test_S1_chatgpt_file_in_codex_home_is_accepted,
@@ -1673,6 +1849,7 @@ def main() -> None:
         test_S35_non_json_constants_refused,
         test_S36_remaining_native_load_error_families_classify,
         test_S37_cancellation_reaps_child_and_completes_quickly,
+        test_S38_owned_descendant_lifecycle_and_finalizer_interrupt,
     ]
     print(f"Running {len(tests)} subscription-only Codex tests...")
     for t in tests:
