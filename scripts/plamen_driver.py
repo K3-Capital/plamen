@@ -17,6 +17,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -620,28 +621,96 @@ def _codex_home_dir() -> Path:
 
 
 _RFC3339_TIMESTAMP_RE = re.compile(
-    r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$"
+    r"^(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})[Tt ]"
+    r"(?P<hour>\d{2}):(?P<minute>\d{2}):(?P<second>\d{2})"
+    r"(?:\.\d+)?"
+    r"(?P<offset>[Zz]|[+-]\d{2}:\d{2})"
+    r"[ \t\r\n]*$"
 )
 
 
-def _looks_like_rfc3339_timestamp(value: str) -> bool:
-    """Validate the timestamp grammar the pinned native serde accepts.
+def _days_in_month(year: int, month: int) -> int:
+    """Calendar days for a month (used by _looks_like_rfc3339_timestamp)."""
+    if month in (1, 3, 5, 7, 8, 10, 12):
+        return 31
+    if month in (4, 6, 9, 11):
+        return 30
+    leap = (year % 4 == 0 and year % 100 != 0) or year % 400 == 0
+    return 29 if leap else 28
 
-    Native `last_refresh` deserializes through chrono's RFC 3339 parser;
-    a malformed value fails the auth-store load ("input contains invalid
-    characters"). Only syntax is checked here — age is deliberately NOT a
-    rejection criterion (native refresh handles stale sessions).
+
+def _looks_like_rfc3339_timestamp(value: str) -> bool:
+    """Validate the RFC 3339 grammar the pinned native parser accepts.
+
+    Native `last_refresh` deserializes through chrono, which accepts
+    `T`/`t`/space separators, an optional fraction, `Z`/`z` or a `±HH:MM`
+    offset, a leap second (`:60`) and trailing whitespace — while
+    range-checking month/day and the offset components, so values that
+    Python's normalizer would silently accept (`+00:60`, `+01:99`,
+    `+24:00`) are refused exactly like native ("input is out of range").
+    Age is deliberately NOT a rejection criterion — native refresh
+    handles stale sessions.
     """
-    if not _RFC3339_TIMESTAMP_RE.match(value):
+    match = _RFC3339_TIMESTAMP_RE.match(value)
+    if not match:
         return False
-    try:
-        normalized = value.replace("z", "+00:00").replace("Z", "+00:00")
-        if normalized[10:11] == "t":
-            normalized = normalized[:10] + "T" + normalized[11:]
-        datetime.fromisoformat(normalized)
-    except ValueError:
+    year = int(match.group("year"))
+    month = int(match.group("month"))
+    day = int(match.group("day"))
+    hour = int(match.group("hour"))
+    minute = int(match.group("minute"))
+    second = int(match.group("second"))
+    if not 1 <= month <= 12:
         return False
+    if not 1 <= day <= _days_in_month(year, month):
+        return False
+    if not 0 <= hour <= 23:
+        return False
+    if not 0 <= minute <= 59:
+        return False
+    if not 0 <= second <= 60:  # leap second
+        return False
+    offset = match.group("offset")
+    if offset not in ("Z", "z"):
+        if not 0 <= int(offset[1:3]) <= 23:
+            return False
+        if not 0 <= int(offset[4:6]) <= 59:
+            return False
     return True
+
+
+class _PairsDict(dict):
+    """dict retaining the raw (key, value) pair list.
+
+    Python's json loader collapses duplicate object keys (last wins), but
+    the native serde scans fields in document order and fails on the first
+    wrong-typed occurrence — so strict validation must see every pair."""
+
+    __slots__ = ("pairs",)
+
+    def __init__(self, pairs):
+        super().__init__(pairs)
+        self.pairs = list(pairs)
+
+
+def _json_dupsafe(text: str) -> object:
+    """Parse JSON while preserving duplicate-key occurrences."""
+    return json.loads(text, object_pairs_hook=_PairsDict)
+
+
+def _field_occurrences(mapping: object, key: str) -> list:
+    """All values stored under `key`, in document order (duplicates
+    included). Plain mappings without pair records yield their single
+    value, if present."""
+    if not isinstance(mapping, dict):
+        return []
+    pairs = getattr(mapping, "pairs", None)
+    if pairs is None:
+        return [mapping[key]] if key in mapping else []
+    return [value for pair_key, value in pairs if pair_key == key]
+
+
+_KNOWN_AUTH_MODES = ("apikey", "chatgpt", "chatgptAuthTokens", "agentIdentity")
 
 
 def _native_claims_usable(claims: dict) -> bool:
@@ -655,28 +724,34 @@ def _native_claims_usable(claims: dict) -> bool:
     chatgpt_account_is_fedramp: bool}> }` with unknown fields ignored.
     A wrong-typed known claim fails the native load — and serde then
     echoes the offending value in the error text — so the preflight must
-    refuse it before any phase can reach the provider.
+    refuse it before any phase can reach the provider. Duplicate keys are
+    scanned occurrence-by-occurrence: Python collapses them (last wins),
+    but native serde fails on an earlier wrong-typed occurrence.
     """
-    if not _optional_string_ok(claims.get("email")):
-        return False
-    profile = claims.get("https://api.openai.com/profile")
-    if profile is not None:
-        if not isinstance(profile, dict) or not _optional_string_ok(
-            profile.get("email")
-        ):
+    for email in _field_occurrences(claims, "email"):
+        if not _optional_string_ok(email):
             return False
-    auth = claims.get("https://api.openai.com/auth")
-    if auth is not None:
+    for profile in _field_occurrences(claims, "https://api.openai.com/profile"):
+        if profile is None:
+            continue
+        if not isinstance(profile, dict):
+            return False
+        for email in _field_occurrences(profile, "email"):
+            if not _optional_string_ok(email):
+                return False
+    for auth in _field_occurrences(claims, "https://api.openai.com/auth"):
+        if auth is None:
+            continue
         if not isinstance(auth, dict):
             return False
         for field in (
             "chatgpt_plan_type", "chatgpt_user_id", "user_id",
             "chatgpt_account_id",
         ):
-            if not _optional_string_ok(auth.get(field)):
-                return False
-        if "chatgpt_account_is_fedramp" in auth:
-            fedramp = auth.get("chatgpt_account_is_fedramp")
+            for value in _field_occurrences(auth, field):
+                if not _optional_string_ok(value):
+                    return False
+        for fedramp in _field_occurrences(auth, "chatgpt_account_is_fedramp"):
             # Native types this as `bool` (serde default false): null and
             # any non-boolean value fail the load.
             if not isinstance(fedramp, bool):
@@ -822,6 +897,38 @@ def _scrub_auth_value_diagnostics(paths: list[Path]) -> None:
                 pass
 
 
+def _sanitize_log_line(line: str, values: list[str]) -> str:
+    """Sanitize one raw child-output line before it is persisted.
+
+    Applied per line as the child writes (see _stream_sanitized_log), so
+    value-bearing auth diagnostics are never persisted even if the run is
+    interrupted before cleanup — the invariant holds at the first write,
+    not afterwards. Audit/tool content (`item.*` events) is never
+    rewritten.
+    """
+    signal = _codex_cli_signal_line(line.rstrip("\r\n"))
+    if signal is None:
+        return line
+    if _VALUE_BEARING_AUTH_RE.search(signal):
+        return _AUTH_LOGS_REDACTED_MARKER + ("\n" if line.endswith("\n") else "")
+    new_line = line
+    for value in values:
+        if value in new_line:
+            new_line = new_line.replace(value, "[redacted]")
+    return new_line
+
+
+def _stream_sanitized_log(stream, log_file, values: list[str]) -> None:
+    """Copy child output into the persisted log, sanitizing each line
+    before it is written and flushed (daemon reader thread)."""
+    try:
+        for line in stream:
+            log_file.write(_sanitize_log_line(line, values))
+            log_file.flush()
+    except Exception:
+        pass
+
+
 def _looks_like_native_id_token(value: object) -> bool:
     """Structurally mirror the native ID-token decode contract.
 
@@ -854,7 +961,7 @@ def _looks_like_native_id_token(value: object) -> bool:
         # bits, so a canonical segment must round-trip when re-encoded.
         if base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != payload_b64:
             return False
-        decoded = json.loads(raw.decode("utf-8"))
+        decoded = _json_dupsafe(raw.decode("utf-8"))
     except Exception:
         return False
     if not isinstance(decoded, dict):
@@ -872,19 +979,25 @@ def _codex_tokens_usable(tokens: object) -> bool:
     when present, must be a string or null (native types it as
     Option<String> — anything else fails the whole auth-store load).
     Token age is intentionally NOT checked — Codex refreshes stale
-    sessions itself, and age alone is not unusability.
+    sessions itself, and age alone is not unusability. Duplicate keys are
+    validated per occurrence, like the native serde scan.
     """
     if not isinstance(tokens, dict):
         return False
     for field in ("access_token", "refresh_token"):
-        value = tokens.get(field)
-        if not isinstance(value, str) or not value.strip():
+        occurrences = _field_occurrences(tokens, field)
+        if not occurrences:
             return False
-    if "account_id" in tokens:
-        account_id = tokens.get("account_id")
+        for value in occurrences:
+            if not isinstance(value, str) or not value.strip():
+                return False
+    for account_id in _field_occurrences(tokens, "account_id"):
         if account_id is not None and not isinstance(account_id, str):
             return False
-    return _looks_like_native_id_token(tokens.get("id_token"))
+    id_tokens = _field_occurrences(tokens, "id_token")
+    if not id_tokens:
+        return False
+    return all(_looks_like_native_id_token(value) for value in id_tokens)
 
 
 def _codex_auth_record() -> "dict[str, object] | None":
@@ -895,42 +1008,61 @@ def _codex_auth_record() -> "dict[str, object] | None":
     when the `OPENAI_API_KEY` field is present-and-not-null
     (`Option::is_some()` semantics — an empty string still counts) and to
     ChatGPT otherwise. Wrong-typed native fields (`auth_mode`,
-    `OPENAI_API_KEY`, `last_refresh`) make the whole record unusable and
-    are refused. Only the ChatGPT resolution is accepted (subscription-only
-    policy): API-mode and non-token records are rejected, and the operator
-    file is never rewritten. The record must also be structurally usable
-    (tokens with a native-loadable id_token) so a mode-only or malformed
-    record fails the preflight clearly instead of failing deep inside a
-    phase.
+    `OPENAI_API_KEY`, `last_refresh`, `agent_identity`, token shapes) make
+    the whole record unusable and are refused, occurrence-by-occurrence —
+    duplicate keys that Python collapses (last wins) fail natively on an
+    earlier wrong-typed occurrence, so they must fail here too. Only the
+    ChatGPT resolution is accepted (subscription-only policy): API-mode and
+    non-token records are rejected, and the operator file is never
+    rewritten. The record must also be structurally usable (tokens with a
+    native-loadable id_token) so a mode-only or malformed record fails the
+    preflight clearly instead of failing deep inside a phase.
     """
     auth_path = _codex_home_dir() / "auth.json"
     if not auth_path.exists():
         return None
     try:
-        data = json.loads(auth_path.read_text(encoding="utf-8"))
+        data = _json_dupsafe(auth_path.read_text(encoding="utf-8"))
     except Exception:
         return None
     if not isinstance(data, dict):
         return None
-    mode = data.get("auth_mode")
-    if mode is not None and not isinstance(mode, str):
-        # Native serde rejects a wrong-typed auth_mode outright.
-        return None
-    api_key = data.get("OPENAI_API_KEY")
-    if api_key is not None and not isinstance(api_key, str):
-        # Native serde rejects a wrong-typed API-key field outright.
-        return None
-    last_refresh = data.get("last_refresh")
-    if last_refresh is not None:
-        if not isinstance(last_refresh, str):
+    for mode_value in _field_occurrences(data, "auth_mode"):
+        if mode_value is None:
+            continue
+        if not isinstance(mode_value, str) or mode_value not in _KNOWN_AUTH_MODES:
+            # Native serde rejects a wrong-typed or unknown auth_mode.
+            return None
+    for api_value in _field_occurrences(data, "OPENAI_API_KEY"):
+        if api_value is not None and not isinstance(api_value, str):
+            # Native serde rejects a wrong-typed API-key field outright.
+            return None
+    for refresh_value in _field_occurrences(data, "last_refresh"):
+        if refresh_value is None:
+            continue
+        if not isinstance(refresh_value, str):
             # Native serde parses last_refresh as a timestamp; a
             # non-string, non-null value fails the load.
             return None
-        if not _looks_like_rfc3339_timestamp(last_refresh):
-            # Native chrono rejects malformed timestamps ("input contains
-            # invalid characters"). Age is NOT a rejection criterion —
-            # native refresh handles legitimately stale sessions.
+        if not _looks_like_rfc3339_timestamp(refresh_value):
+            # Native chrono rejects malformed/out-of-range timestamps
+            # ("input contains invalid characters" / "input is out of
+            # range"). Age is NOT a rejection criterion — native refresh
+            # handles legitimately stale sessions.
             return None
+    for identity in _field_occurrences(data, "agent_identity"):
+        # Native types agent_identity as Option<String>.
+        if identity is not None and not isinstance(identity, str):
+            return None
+    for tokens_value in _field_occurrences(data, "tokens"):
+        if tokens_value is None:
+            continue
+        if not _codex_tokens_usable(tokens_value):
+            return None
+    # Semantic resolution uses the final (last) occurrence, matching the
+    # native struct state after its in-order validation scan.
+    mode = data.get("auth_mode")
+    api_key = data.get("OPENAI_API_KEY")
     if mode is None:
         # Native legacy resolution mirrors Option::is_some() — an empty
         # string is still present and wins over tokens; only absent or
@@ -1062,10 +1194,12 @@ def _detect_codex_model_rejection(log_path: Path) -> bool:
     ChatGPT-auth accounts may reject explicit --model depending on plan state
     or token freshness. When detected, the driver retries without --model,
     letting the subscription tier determine the default model automatically.
+
+    Signal-scoped: only CLI diagnostics and error/turn.failed payloads are
+    matched, so audit text quoting the message cannot trigger a retry.
     """
-    try:
-        text = log_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    text = _codex_cli_signal_text(log_path)
+    if not text:
         return False
     return "not supported when using Codex with a ChatGPT account" in text
 
@@ -1078,10 +1212,12 @@ def _detect_codex_model_not_available(log_path: Path) -> bool:
     denied" that is distinct from a credential failure. This must be checked
     BEFORE _detect_codex_auth_error, which would otherwise misclassify it as
     a permanent auth failure instead of a recoverable model-downgrade scenario.
+
+    Signal-scoped (see _codex_cli_signal_line): audit/tool content quoting
+    model errors must not mask — or fake — competing decisions.
     """
-    try:
-        text = log_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    text = _codex_cli_signal_text(log_path)
+    if not text:
         return False
     return bool(re.search(
         r"(?:model.*(?:not\s+found|does\s+not\s+exist|not\s+available)"
@@ -1096,10 +1232,11 @@ def _detect_codex_model_not_available(log_path: Path) -> bool:
 
 
 def _detect_codex_model_capacity(log_path: Path) -> bool:
-    """Detect transient Codex/OpenAI selected-model capacity failures."""
-    try:
-        text = log_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    """Detect transient Codex/OpenAI selected-model capacity failures.
+
+    Signal-scoped: audit/tool content cannot fake a capacity fallback."""
+    text = _codex_cli_signal_text(log_path)
+    if not text:
         return False
     return bool(re.search(
         r"(?:selected\s+model\s+is\s+at\s+capacity|model\s+is\s+at\s+capacity)",
@@ -1194,16 +1331,18 @@ def _detect_codex_auth_error(log_path: Path) -> bool:
         return False
     if not text:
         return False
-    # Exclude model/capacity/rate-limit patterns from auth classification.
-    if _detect_codex_model_not_available(log_path) or _CODEX_RATE_LIMIT_RE.search(text):
-        return False
     # Codex JSON logs include the full audit prompt and model transcript, so
     # words like "Unauthorized" commonly appear as vulnerability text — and
     # `item.*` events carry it verbatim. Classify only CLI-signal lines:
     # raw diagnostics and error/turn.failed event payloads (see
-    # _codex_cli_signal_line).
+    # _codex_cli_signal_line). Both the auth matching AND the competing
+    # exclusions below use this scoped text, so an audit item quoting
+    # quota/model text can neither mask a real auth failure nor fake one.
     text = _codex_cli_signal_text(log_path)
     if not text:
+        return False
+    # Exclude model/capacity/rate-limit patterns from auth classification.
+    if _detect_codex_model_not_available(log_path) or _CODEX_RATE_LIMIT_RE.search(text):
         return False
     return bool(re.search(
         r"(?:status[=:\s]+401|HTTP\s+401"
@@ -1218,6 +1357,7 @@ def _detect_codex_auth_error(log_path: Path) -> bool:
         r"|(?:invalid\s+(?:symbol|last\s+symbol)\s+\d+,\s*offset\s+\d+)"
         r"|(?:invalid\s+input\s+length[^\r\n]{0,20}\d+)"
         r"|(?:input\s+contains\s+invalid\s+characters[^\r\n]{0,60}at\s+line\s+\d+\s+column\s+\d+)"
+        r"|(?:input\s+is\s+out\s+of\s+range[^\r\n]{0,60}at\s+line\s+\d+\s+column\s+\d+)"
         r"|(?:auth[\s-]store\s+load\s+error)"
         r"|(?:chatgpt\s+login\s+is\s+required[^\r\n]{0,80}api\s+key))",
         text, re.IGNORECASE,
@@ -1231,10 +1371,13 @@ def _detect_codex_rate_limit(log_path: Path, returncode: int) -> bool:
     usage_limit_reached in the event stream with rc=0 (graceful stop).
 
     Returns False for auth errors (401) — those need re-auth, not backoff.
+
+    Signal-scoped (see _codex_cli_signal_line): an audit item quoting
+    `usage_limit_reached` must neither mask a real auth failure nor be
+    reported as a rate limit itself.
     """
-    try:
-        text = log_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    text = _codex_cli_signal_text(log_path)
+    if not text:
         return False
     # Auth errors are NOT rate limits — discriminate early
     if _detect_codex_auth_error(log_path):
@@ -1983,23 +2126,47 @@ def _run_recovery_attempt(
     subprocess_env: dict[str, str],
     popen_kwargs: dict[str, Any],
     timeout: int,
+    sanitize_stream: bool = False,
 ) -> bool:
     """Spawn one recovery-shard attempt and wait for it (attempt 1/2).
 
     Mirrors the ordinary phase spawn: snapshot file as stdin, merged
-    stdout/stderr log, session-scoped env and platform popen kwargs.
+    stdout/stderr log, session-scoped env and platform popen kwargs. With
+    `sanitize_stream` (Codex backend) the child's output is piped through
+    the per-line sanitizer before the first persisted write, so an
+    interrupted run can never leave value-bearing auth diagnostics.
     """
+    stream_reader: Optional[threading.Thread] = None
+    stream_stdout = None
     with attempt_log.open("w", encoding="utf-8", errors="replace") as out, \
             snap.open("rb") as stdin_file:
         try:
-            proc = subprocess.Popen(
-                attempt_cmd,
-                stdin=stdin_file, stdout=out, stderr=subprocess.STDOUT,
-                text=True, encoding="utf-8", errors="replace",
-                cwd=project_root,
-                env=subprocess_env,
-                **popen_kwargs,
-            )
+            if sanitize_stream:
+                proc = subprocess.Popen(
+                    attempt_cmd,
+                    stdin=stdin_file, stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True, encoding="utf-8", errors="replace",
+                    cwd=project_root,
+                    env=subprocess_env,
+                    **popen_kwargs,
+                )
+                stream_stdout = proc.stdout
+                stream_reader = threading.Thread(
+                    target=_stream_sanitized_log,
+                    args=(proc.stdout, out, _auth_record_string_values()),
+                    daemon=True,
+                )
+                stream_reader.start()
+            else:
+                proc = subprocess.Popen(
+                    attempt_cmd,
+                    stdin=stdin_file, stdout=out, stderr=subprocess.STDOUT,
+                    text=True, encoding="utf-8", errors="replace",
+                    cwd=project_root,
+                    env=subprocess_env,
+                    **popen_kwargs,
+                )
         except Exception as e:
             log.warning(f"[verify_recovery] Popen failed: {e}")
             return False
@@ -2009,6 +2176,14 @@ def _run_recovery_attempt(
         except subprocess.TimeoutExpired:
             _terminate_process_tree(proc, grace_s=10)
             log.warning(f"[verify_recovery] timed out after {timeout}s")
+        finally:
+            if stream_reader is not None:
+                stream_reader.join(timeout=30)
+            if stream_stdout is not None:
+                try:
+                    stream_stdout.close()
+                except Exception:
+                    pass
     return True
 
 
@@ -2220,7 +2395,7 @@ def _run_verify_recovery_shard(
     spawned = _run_recovery_attempt(
         cmd, log_path, snap=snap, project_root=config["project_root"],
         subprocess_env=subprocess_env, popen_kwargs=popen_kwargs,
-        timeout=timeout,
+        timeout=timeout, sanitize_stream=codex_backend,
     )
     if not spawned:
         return [fid for fid, _ in missing]
@@ -2243,7 +2418,7 @@ def _run_verify_recovery_shard(
             retry_cmd, retry_log, snap=snap,
             project_root=config["project_root"],
             subprocess_env=subprocess_env, popen_kwargs=popen_kwargs,
-            timeout=timeout,
+            timeout=timeout, sanitize_stream=codex_backend,
         )
         if retried:
             log_path = retry_log
@@ -2882,17 +3057,40 @@ def run_phase(phase: Phase, config: dict, attempt: int) -> int:
     else:
         popen_kwargs["start_new_session"] = True
 
+    stream_reader: Optional[threading.Thread] = None
+    stream_stdout = None
     with log_path.open("w", encoding="utf-8", errors="replace") as out, \
             snap.open("rb") as stdin_file:
         try:
-            proc = subprocess.Popen(
-                cmd,
-                stdin=stdin_file, stdout=out, stderr=subprocess.STDOUT,
-                text=True, encoding="utf-8", errors="replace",
-                cwd=config["project_root"],
-                env=subprocess_env,
-                **popen_kwargs,
-            )
+            if backend == "codex":
+                # Pipe the child's output through the per-line sanitizer so
+                # value-bearing auth diagnostics are never persisted — even
+                # when this run is interrupted before the post-run cleanup.
+                proc = subprocess.Popen(
+                    cmd,
+                    stdin=stdin_file, stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True, encoding="utf-8", errors="replace",
+                    cwd=config["project_root"],
+                    env=subprocess_env,
+                    **popen_kwargs,
+                )
+                stream_stdout = proc.stdout
+                stream_reader = threading.Thread(
+                    target=_stream_sanitized_log,
+                    args=(proc.stdout, out, _auth_record_string_values()),
+                    daemon=True,
+                )
+                stream_reader.start()
+            else:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdin=stdin_file, stdout=out, stderr=subprocess.STDOUT,
+                    text=True, encoding="utf-8", errors="replace",
+                    cwd=config["project_root"],
+                    env=subprocess_env,
+                    **popen_kwargs,
+                )
         except Exception as e:
             log.error(f"[{phase.name}] Popen failed: {e}")
             try:
@@ -2925,6 +3123,14 @@ def run_phase(phase: Phase, config: dict, attempt: int) -> int:
             _terminate_process_tree(proc, grace_s=10)
             log.warning(f"[{phase.name}] timed out after {timeout}s")
             rc = -2  # timeout sentinel
+        finally:
+            if stream_reader is not None:
+                stream_reader.join(timeout=30)
+            if stream_stdout is not None:
+                try:
+                    stream_stdout.close()
+                except Exception:
+                    pass
 
     # Copy to canonical so detect_rate_limit finds latest
     try:

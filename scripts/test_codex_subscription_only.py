@@ -59,6 +59,9 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import time
+import unittest.mock as mock
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
@@ -160,6 +163,9 @@ if os.environ.get("FAKE_AUTH_ERROR") == "1":
 value_marker = os.environ.get("FAKE_AUTH_VALUE_ERROR", "")
 if value_marker:
     print('invalid type: string "%s", expected a boolean at line 1 column 94' % value_marker, flush=True)
+    if os.environ.get("FAKE_SLEEP"):
+        import time as _time
+        _time.sleep(float(os.environ["FAKE_SLEEP"]))
     sys.exit(1)
 item_marker = os.environ.get("FAKE_ITEM_ECHO", "")
 if item_marker:
@@ -1026,8 +1032,10 @@ def test_S27_native_claim_type_parity():
 
 
 def test_S28_native_timestamp_parity():
-    """last_refresh must match the native RFC 3339 grammar; age is never a
-    rejection criterion (native refresh handles stale sessions)."""
+    """last_refresh must match the native RFC 3339 grammar (space/t
+    separators, leap second, trailing whitespace and Z/offsets accepted by
+    native; out-of-range components refused); age is never a rejection
+    criterion (native refresh handles stale sessions)."""
     fix = _mkfix("timestamps")
     cases = (
         ("offset accepted", "2026-01-01T00:00:00+00:00", True),
@@ -1035,11 +1043,25 @@ def test_S28_native_timestamp_parity():
         ("fractional + offset accepted", "2026-01-01T00:00:00.123456+02:30", True),
         ("stale-but-valid accepted", "2021-01-01T00:00:00Z", True),
         ("null accepted", None, True),
+        ("space separator accepted (native control)",
+            "2026-01-01 00:00:00Z", True),
+        ("leap second accepted (native control)",
+            "2016-12-31T23:59:60Z", True),
+        ("trailing whitespace accepted (native control)",
+            "2026-01-01T00:00:00Z\n", True),
         ("not-a-date refused", "not-a-date", False),
         ("date only refused", "2026-01-01", False),
-        ("space separator refused", "2026-01-01 00:00:00Z", False),
         ("month 13 refused", "2026-13-01T00:00:00Z", False),
+        ("day 32 refused", "2026-01-32T00:00:00Z", False),
+        ("feb 30 refused", "2026-02-30T00:00:00Z", False),
         ("hour 25 refused", "2026-01-01T25:00:00Z", False),
+        ("minute 61 refused", "2026-01-01T00:61:00Z", False),
+        ("offset minute 60 refused (native out-of-range)",
+            "2099-01-01T00:00:00+00:60", False),
+        ("offset minute 99 refused (native out-of-range)",
+            "2099-01-01T00:00:00+01:99", False),
+        ("offset hour 24 refused (native out-of-range)",
+            "2099-01-01T00:00:00+24:00", False),
         ("colon-less offset refused", "2026-01-01T00:00:00+0000", False),
         ("trailing junk refused", "2026-01-01T00:00:00Z junk", False),
     )
@@ -1210,6 +1232,182 @@ def test_S30_value_bearing_auth_diagnostics_scrubbed_from_logs():
           and D._detect_codex_auth_error(recovery_log) is True, "")
 
 
+# --------------------------------------------------------------------------
+# Round-5: duplicate-key strictness, signal-scoped exclusions, first-write
+# sanitization (review of daf552a)
+# --------------------------------------------------------------------------
+
+def test_S31_duplicate_key_and_known_field_strictness():
+    """Occurrence-by-occurrence validation: duplicate keys that Python
+    collapses (last wins) must fail like the native serde scan when an
+    earlier occurrence is wrong-typed; agent_identity is type-checked."""
+    fix = _mkfix("dups")
+    base_tokens = _tokens()
+    header, _, signature = _fake_id_token().split(".")
+    def _token_for(claims_raw: bytes) -> str:
+        payload = base64.urlsafe_b64encode(claims_raw).rstrip(b"=").decode()
+        return f"{header}.{payload}.{signature}"
+
+    duplicate_claim_token = _token_for(
+        b'{"https://api.openai.com/auth":'
+        b'{"chatgpt_account_is_fedramp":"SYNTHETIC-MARKER",'
+        b'"chatgpt_account_is_fedramp":false}}'
+    )
+    dict_cases = (
+        ("duplicate wrong-then-valid claim refused",
+            {"auth_mode": "chatgpt",
+             "tokens": _tokens(id_token=duplicate_claim_token)}, False),
+        ("agent_identity integer refused",
+            {"auth_mode": "chatgpt", "tokens": base_tokens,
+             "agent_identity": 42}, False),
+        ("agent_identity string accepted",
+            {"auth_mode": "chatgpt", "tokens": base_tokens,
+             "agent_identity": "fixture-agent-jwt"}, True),
+        ("agent_identity null accepted",
+            {"auth_mode": "chatgpt", "tokens": base_tokens,
+             "agent_identity": None}, True),
+        ("unknown top-level field ignored",
+            {"auth_mode": "chatgpt", "tokens": base_tokens,
+             "future_field": {"x": 1}}, True),
+    )
+    for label, payload, want in dict_cases:
+        home = _case_dir(fix, label)
+        _write_auth(home, payload)
+        with _env(CODEX_HOME=str(home), HOME=str(fix)):
+            check(f"S31 {label}", D._codex_auth_available() is want, "")
+    tokens_json = json.dumps(base_tokens)
+    raw_cases = (
+        ("duplicate unknown auth_mode refused",
+            '{"auth_mode": "bogus-mode", "auth_mode": "chatgpt", '
+            f'"tokens": {tokens_json}}}', False),
+        ("duplicate wrong-typed key field refused",
+            '{"auth_mode": "chatgpt", '
+            f'"tokens": {tokens_json}, '
+            '"OPENAI_API_KEY": 42, "OPENAI_API_KEY": null}', False),
+        ("duplicate wrong-typed tokens refused",
+            '{"auth_mode": "chatgpt", "tokens": 42, '
+            f'"tokens": {tokens_json}}}', False),
+    )
+    for label, raw, want in raw_cases:
+        home = _case_dir(fix, label)
+        home.mkdir()
+        (home / "auth.json").write_text(raw, encoding="utf-8")
+        with _env(CODEX_HOME=str(home), HOME=str(fix)):
+            check(f"S31 {label}", D._codex_auth_available() is want, "")
+
+
+def test_S32_quoted_quota_text_scoping():
+    """An audit item quoting quota/model text neither masks a real auth
+    failure nor registers as a rate limit; real signals still classify."""
+    fix = _mkfix("quota")
+    item_quota = json.dumps({"type": "item.completed", "item": {
+        "id": "item_3", "type": "agent_message",
+        "text": "Documentation example: usage_limit_reached is an API error code."}})
+    item_model = json.dumps({"type": "item.completed", "item": {
+        "id": "item_4", "type": "agent_message",
+        "text": "The docs mention: model gpt-5.5 does not exist for this plan."}})
+    cases = (
+        ("quota item + real 401 event",
+         [item_quota, json.dumps({"type": "error",
+                                  "message": "HTTP 401 Unauthorized"})],
+         True, False),
+        ("quota item + native load-error line",
+         [item_quota,
+          "invalid type: integer `42`, expected a string at line 1 column 438"],
+         True, False),
+        ("model-quote item + real 401 event",
+         [item_model, "ERROR: unexpected status 401 Unauthorized"],
+         True, False),
+        ("quota item + real quota event (still detected)",
+         [item_quota, json.dumps({"type": "error",
+                                  "message": "usage_limit_reached"})],
+         False, True),
+        ("quota item alone is neither",
+         [item_quota], False, False),
+    )
+    for label, lines, want_auth, want_rate in cases:
+        path = fix / (_case_dir(fix, label).name + ".jsonl")
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        check(f"S32 auth: {label}",
+              D._detect_codex_auth_error(path) is want_auth, "")
+        check(f"S32 rate-limit rc=1: {label}",
+              D._detect_codex_rate_limit(path, 1) is want_rate, "")
+
+
+def test_S33_auth_values_never_persisted_before_cleanup():
+    """The value must already be absent when the post-hoc scrub runs (the
+    sanitizer applies at first write), and must never appear in the log
+    while the child is still running (interrupt-safety)."""
+    marker = "SYNTHETIC-REVIEW-INGRESS-MARKER"
+    fix = _mkfix("ingress")
+    codex_home = fix / "codexhome"
+    _write_auth(codex_home, {"auth_mode": "chatgpt",
+                             "tokens": _tokens(access_token=marker)})
+    captured: list[bool] = []
+    original = D._scrub_auth_value_diagnostics
+
+    def observe(paths):
+        captured.extend(
+            marker in p.read_text(errors="replace") for p in paths if p.exists()
+        )
+        return original(paths)
+    with mock.patch.object(D, "_scrub_auth_value_diagnostics", side_effect=observe):
+        _run_phase_with_fake(fix, codex_home, {"FAKE_AUTH_VALUE_ERROR": marker})
+    check("S33a scrub boundary observed", bool(captured), "")
+    check("S33b value absent at the scrub boundary (sanitized at first write)",
+          not any(captured), "")
+    # Interrupt-safety: while the child is still running (it sleeps after
+    # emitting the diagnostic), the persisted log already carries the
+    # redacted marker and never the raw value.
+    fix2 = _mkfix("ingress_live")
+    home2 = fix2 / "codexhome"
+    _write_auth(home2, {"auth_mode": "chatgpt",
+                        "tokens": _tokens(access_token=marker)})
+    sp2 = fix2 / "scratch"
+    sp2.mkdir()
+    proj2 = fix2 / "proj"
+    proj2.mkdir()
+    (fix2 / "home" / ".codex" / "plamen").mkdir(parents=True)
+    fake = fix2 / "fake_agent.py"
+    fake.write_text(_FAKE_AGENT_SCRIPT, encoding="utf-8")
+    fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+    original_bin = D.CODEX_BIN
+    D.CODEX_BIN = str(fake)
+    result: dict = {}
+
+    def _drive():
+        with _env(HOME=str(fix2 / "home"), CODEX_HOME=str(home2),
+                  FAKE_MARKER_DIR=str(fix2 / "markers"),
+                  FAKE_SCRATCH=str(sp2), PLAMEN_PLAIN_OUTPUT="1",
+                  FAKE_AUTH_VALUE_ERROR=marker, FAKE_SLEEP="6"):
+            phase = [ph for ph in D.SC_PHASES if ph.name == "breadth"][0]
+            result["rc"] = D.run_phase(phase, {
+                "scratchpad": str(sp2), "pipeline": "sc",
+                "project_root": str(proj2), "language": "solidity",
+                "mode": "light", "cli_backend": "codex",
+            }, 1)
+    driver_thread = threading.Thread(target=_drive, daemon=True)
+    seen_redacted = False
+    try:
+        driver_thread.start()
+        attempt = sp2 / "_stdio_breadth.attempt1.log"
+        for _ in range(120):
+            time.sleep(0.1)
+            if attempt.exists():
+                text = attempt.read_text(encoding="utf-8", errors="replace")
+                if "auth-store load error" in text:
+                    seen_redacted = True
+                    check("S33d raw value absent while child still running",
+                          marker not in text, "")
+                    break
+    finally:
+        driver_thread.join(timeout=30)
+        D.CODEX_BIN = original_bin
+    check("S33c redacted marker persisted while child still running",
+          seen_redacted, "")
+    check("S33e run completed", "rc" in result, "")
+
+
 def main() -> None:
     tests = [
         test_S1_chatgpt_file_in_codex_home_is_accepted,
@@ -1242,6 +1440,9 @@ def main() -> None:
         test_S28_native_timestamp_parity,
         test_S29_cli_signal_scoped_classification,
         test_S30_value_bearing_auth_diagnostics_scrubbed_from_logs,
+        test_S31_duplicate_key_and_known_field_strictness,
+        test_S32_quoted_quota_text_scoping,
+        test_S33_auth_values_never_persisted_before_cleanup,
     ]
     print(f"Running {len(tests)} subscription-only Codex tests...")
     for t in tests:
