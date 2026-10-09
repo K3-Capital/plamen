@@ -1,16 +1,28 @@
 """Subscription-only Codex auth policy tests (KCA-727 fork delta).
 
 Fixtures only: synthetic auth.json files and fake API-key environment
-values. No network access, no real provider traffic, no real credentials.
+values plus a fake executable that records its argv/stdin/environment.
+No network access, no real provider traffic, no real credentials.
 
 Covers the driver's subscription-only enforcement:
-  - _codex_home_dir / _codex_auth_available / _codex_auth_is_chatgpt
-    (a ChatGPT OAuth auth file is the only accepted authentication source;
-    API-key environment variables never satisfy the preflight)
+  - _codex_home_dir / _codex_auth_record / _codex_auth_available /
+    _codex_auth_is_chatgpt: native resolved-mode semantics (explicit
+    chatgpt, or legacy missing/null auth_mode with OAuth tokens and no API
+    key field), structural token checks (native-loadable JWT id_token,
+    non-empty access/refresh), API-mode rejection, and no age-based
+    rejection of legitimately stale sessions.
   - _phase_subprocess_env (inherited CODEX_API_KEY / OPENAI_API_KEY are
     scrubbed from every phase subprocess environment)
   - _build_codex_cmd / _build_codex_cmd_no_model carry the forced-login
     -c overrides even though phase invocations use --ignore-user-config
+  - _detect_codex_auth_error: native auth-store structure failures are
+    classified as permanent credential failures.
+  - _run_verify_recovery_shard: a Codex-mode recovery shard uses the same
+    hardened auth check, prompt translation, command builder, model retry
+    and scrubbed environment as ordinary phases; Claude-mode behavior is
+    preserved separately.
+  - _translate_prompt_for_codex: requires the ephemeral methodology alias
+    $HOME/.codex/plamen (runtime handoff requirement).
   - clamp_phase_timeouts (K3 deployment delta: the pinned revision's phase
     budgets exceed the validator ceiling and would abort every run)
 
@@ -19,8 +31,10 @@ Run: `python test_codex_subscription_only.py` or `pytest scripts/`.
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import json
+import logging
 import os
 import stat
 import subprocess
@@ -47,13 +61,44 @@ def check(label: str, ok: bool, detail: str = "") -> None:
         print(f"  FAIL  {label} :: {detail}")
 
 
-_FAKE_CHATGPT_AUTH = {
-    "auth_mode": "chatgpt",
-    "tokens": {
+def _fake_id_token(exp: int = 4102444800) -> str:
+    """A structurally native-loadable (but entirely synthetic) ID token.
+
+    Three base64url segments; the payload decodes to a JSON claims object
+    with a ChatGPT auth namespace — the shape the pinned native loader
+    accepts. It is not a real session.
+    """
+    header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}')
+    payload = base64.urlsafe_b64encode(json.dumps({
+        "email": "fixture@example.invalid",
+        "exp": exp,
+        "https://api.openai.com/auth": {
+            "chatgpt_plan_type": "plus",
+            "chatgpt_user_id": "user-fixture",
+            "chatgpt_account_id": "acct-fixture",
+        },
+    }).encode("utf-8"))
+    return (
+        header.rstrip(b"=").decode("ascii")
+        + "."
+        + payload.rstrip(b"=").decode("ascii")
+        + ".sig"
+    )
+
+
+def _tokens(**overrides) -> dict:
+    tokens = {
         "access_token": "fake-access-token",
         "refresh_token": "fake-refresh-token",
-        "id_token": "fake-id-token",
-    },
+        "id_token": _fake_id_token(),
+    }
+    tokens.update(overrides)
+    return tokens
+
+
+_FAKE_CHATGPT_AUTH = {
+    "auth_mode": "chatgpt",
+    "tokens": _tokens(),
     "last_refresh": "2026-01-01T00:00:00+00:00",
 }
 
@@ -61,6 +106,47 @@ _FORCED_LOGIN_PAIRS = (
     ["-c", 'forced_login_method="chatgpt"'],
     ["-c", 'cli_auth_credentials_store="file"'],
 )
+
+# Fake provider executable used by the launch tests. Records argv (full,
+# including argv[0]), selected environment flags and the stdin prompt;
+# behavior is driven by FAKE_* environment variables.
+_FAKE_AGENT_SCRIPT = """#!/usr/bin/env python3
+import json, os, pathlib, sys
+
+marker_dir = pathlib.Path(os.environ["FAKE_MARKER_DIR"])
+marker_dir.mkdir(parents=True, exist_ok=True)
+attempt = len(list(marker_dir.glob("attempt_*.json"))) + 1
+stdin_text = ""
+try:
+    stdin_text = sys.stdin.read()
+except Exception:
+    pass
+payload = {
+    "argv": sys.argv,
+    "attempt": attempt,
+    "codex_api_key_present": "CODEX_API_KEY" in os.environ,
+    "openai_api_key_present": "OPENAI_API_KEY" in os.environ,
+    "anthropic_api_key_present": "ANTHROPIC_API_KEY" in os.environ,
+    "prompt_mentions_recovery": "RECOVERY VERIFICATION SHARD" in stdin_text,
+    "prompt_mentions_codex_path": "~/.codex/plamen/" in stdin_text,
+}
+(marker_dir / ("attempt_%d.json" % attempt)).write_text(json.dumps(payload))
+
+if os.environ.get("FAKE_FAIL_MODEL") == "1" and "--model" in sys.argv:
+    print("not supported when using Codex with a ChatGPT account", flush=True)
+    sys.exit(1)
+if os.environ.get("FAKE_AUTH_ERROR") == "1":
+    print("error: invalid ID token format", flush=True)
+    sys.exit(1)
+write_ids = os.environ.get("FAKE_WRITE_VERIFY", "")
+if write_ids:
+    scratch = pathlib.Path(os.environ["FAKE_SCRATCH"])
+    for fid in write_ids.split(","):
+        (scratch / ("verify_%s.md" % fid)).write_text(
+            "RECOVERED VERIFICATION CONTENT\\n" * 6, encoding="utf-8"
+        )
+sys.exit(0)
+"""
 
 
 @contextlib.contextmanager
@@ -307,6 +393,354 @@ def test_S10_phase_timeout_clamp_restores_runnability():
             phase.base_timeout_s = timeout
 
 
+# --------------------------------------------------------------------------
+# Native-compatible auth record resolution (missing/null legacy modes)
+# --------------------------------------------------------------------------
+
+def test_S11_legacy_oauth_records_without_mode_are_accepted():
+    """Native resolves a missing/null auth_mode to ChatGPT when OAuth
+    tokens are present and no API key field is; the predicate must match."""
+    fix = _mkfix("legacy")
+    for label, drop in (("missing", True), ("null", False)):
+        home = fix / label
+        payload = json.loads(json.dumps(_FAKE_CHATGPT_AUTH))
+        if drop:
+            payload.pop("auth_mode")
+        else:
+            payload["auth_mode"] = None
+        _write_auth(home, payload)
+        with _env(CODEX_HOME=str(home), HOME=str(fix)):
+            check(f"S11 {label} auth_mode legacy record accepted",
+                  D._codex_auth_available() is True, "")
+            check(f"S11 {label} chatgpt detector agrees",
+                  D._codex_auth_is_chatgpt() is True, "")
+
+
+def test_S12_structural_and_api_negatives_rejected():
+    """API-mode, mixed, mode-only and malformed-token records are refused."""
+    fix = _mkfix("neg")
+    tokens = _tokens()
+    padded_segments = _fake_id_token().split(".")
+    padded_segments[1] = padded_segments[1] + "=="
+    padded = ".".join(padded_segments)
+    cases = {
+        "explicit apikey mode": {"auth_mode": "apikey", "tokens": tokens},
+        "explicit chatgptAuthTokens mode":
+            {"auth_mode": "chatgptAuthTokens", "tokens": tokens},
+        "explicit agentIdentity mode":
+            {"auth_mode": "agentIdentity", "tokens": tokens},
+        "legacy with API key field":
+            {"tokens": tokens, "OPENAI_API_KEY": "fake-key"},
+        "legacy with API key field only": {"OPENAI_API_KEY": "fake-key"},
+        "mode only no tokens": {"auth_mode": "chatgpt"},
+        "tokens missing id_token":
+            {"auth_mode": "chatgpt",
+             "tokens": {k: v for k, v in tokens.items() if k != "id_token"}},
+        "malformed id token not a JWT":
+            {"auth_mode": "chatgpt", "tokens": _tokens(id_token="fake-id")},
+        "malformed id token two segments":
+            {"auth_mode": "chatgpt", "tokens": _tokens(id_token="abc.def")},
+        "padded JWT payload":
+            {"auth_mode": "chatgpt", "tokens": _tokens(id_token=padded)},
+        "empty access token":
+            {"auth_mode": "chatgpt", "tokens": _tokens(access_token="")},
+        "non-string refresh token":
+            {"auth_mode": "chatgpt", "tokens": _tokens(refresh_token=123)},
+    }
+    for label, payload in cases.items():
+        home = fix / label.replace(" ", "_")
+        _write_auth(home, payload)
+        with _env(CODEX_HOME=str(home), HOME=str(fix)):
+            check(f"S12 {label} rejected",
+                  D._codex_auth_available() is False, "")
+
+
+def test_S13_stale_but_structured_sessions_are_accepted():
+    """Age alone is not unusability: native refreshes stale sessions."""
+    fix = _mkfix("stale")
+    payload = json.loads(json.dumps(_FAKE_CHATGPT_AUTH))
+    payload["last_refresh"] = "2025-01-01T00:00:00+00:00"
+    payload["tokens"] = _tokens(id_token=_fake_id_token(exp=946684800))
+    _write_auth(fix / "home", payload)
+    with _env(CODEX_HOME=str(fix / "home"), HOME=str(fix)):
+        check("S13 expired-but-structural record accepted (native refresh)",
+              D._codex_auth_available() is True, "")
+
+
+# --------------------------------------------------------------------------
+# Auth-store structure failures classify as permanent credential failures
+# --------------------------------------------------------------------------
+
+def test_S14_auth_error_detector_classifies_structure_failures():
+    fix = _mkfix("detect")
+
+    def _log(name: str, body: str) -> Path:
+        path = fix / name
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    check("S14a invalid ID token format classified",
+          D._detect_codex_auth_error(
+              _log("a.log", "Error checking login status: invalid ID token format")
+          ) is True, "")
+    check("S14b missing id_token field classified",
+          D._detect_codex_auth_error(
+              _log("b.log", "failed to load auth.json: missing field `id_token`")
+          ) is True, "")
+    check("S14c token-data-unavailable classified",
+          D._detect_codex_auth_error(
+              _log("c.log", "Error: Token data is not available.")
+          ) is True, "")
+    check("S14d model-not-available not misclassified as auth",
+          D._detect_codex_auth_error(
+              _log("d.log", "The model gpt-5.5 is not available for your plan")
+          ) is False, "")
+    check("S14e plain 401 still classified",
+          D._detect_codex_auth_error(
+              _log("e.log", "ERROR: unexpected status 401 Unauthorized")
+          ) is True, "")
+
+
+# --------------------------------------------------------------------------
+# Verify-recovery shard: Codex-mode parity (F1 corrections)
+# --------------------------------------------------------------------------
+
+def _run_recovery_with_fake(
+    *,
+    pipeline: str,
+    backend: str = "codex",
+    with_auth: bool = True,
+    home_alias: bool = True,
+    fake_env: dict | None = None,
+):
+    """Run _run_verify_recovery_shard against a fake provider executable.
+
+    Returns (fix, scratchpad, marker_dir, result, log_records).
+    """
+    fix = _mkfix(f"recovery_{pipeline}")
+    proj = fix / "proj"
+    proj.mkdir()
+    sp = fix / "scratch"
+    sp.mkdir()
+    home = fix / "home"
+    (home / ".codex").mkdir(parents=True)
+    if home_alias:
+        (home / ".codex" / "plamen").mkdir()
+    codex_home = fix / "codexhome"
+    if with_auth:
+        _write_auth(codex_home, _FAKE_CHATGPT_AUTH)
+    else:
+        codex_home.mkdir(parents=True, exist_ok=True)
+
+    config = {
+        "scratchpad": str(sp),
+        "pipeline": pipeline,
+        "project_root": str(proj),
+        "language": "solidity",
+        "mode": "light",
+        "cli_backend": backend,
+    }
+    missing = [
+        ("F-1", {"finding id": "F-1", "severity": "High", "title": "One"}),
+        ("F-2", {"finding id": "F-2", "severity": "Medium", "title": "Two"}),
+    ]
+
+    marker = fix / "markers"
+    fake = fix / "fake_agent.py"
+    fake.write_text(_FAKE_AGENT_SCRIPT, encoding="utf-8")
+    fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+
+    original_codex = D.CODEX_BIN
+    original_claude = D.CLAUDE_BIN
+    D.CODEX_BIN = str(fake)
+    D.CLAUDE_BIN = str(fake)
+
+    records: list[str] = []
+
+    class _Collect(logging.Handler):
+        def emit(self, record):
+            try:
+                records.append(record.getMessage())
+            except Exception:
+                pass
+
+    handler = _Collect()
+    logger = D.log
+    logger.addHandler(handler)
+
+    env = {
+        "HOME": str(home),
+        "CODEX_HOME": str(codex_home),
+        "FAKE_MARKER_DIR": str(marker),
+        "FAKE_SCRATCH": str(sp),
+    }
+    if fake_env:
+        env.update(fake_env)
+    try:
+        with _env(**env):
+            result = D._run_verify_recovery_shard(config, missing)
+    finally:
+        D.CODEX_BIN = original_codex
+        D.CLAUDE_BIN = original_claude
+        logger.removeHandler(handler)
+    return fix, sp, marker, result, records
+
+
+def _attempt_payloads(marker: Path) -> list[dict]:
+    if not marker.exists():
+        return []
+    return [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted(marker.glob("attempt_*.json"))
+    ]
+
+
+def test_S15_recovery_codex_launch_sc_and_l1():
+    """Codex-mode recovery uses the hardened codex path for both pipelines."""
+    for pipeline in ("sc", "l1"):
+        fix, sp, marker, result, records = _run_recovery_with_fake(
+            pipeline=pipeline,
+            fake_env={
+                "CODEX_API_KEY": "fake-1",
+                "OPENAI_API_KEY": "fake-2",
+                "ANTHROPIC_API_KEY": "fake-anthropic",
+                "FAKE_WRITE_VERIFY": "F-1,F-2",
+            },
+        )
+        attempts = _attempt_payloads(marker)
+        check(f"S15 {pipeline}: exactly one recovery spawn",
+              len(attempts) == 1, str([a.get("attempt") for a in attempts]))
+        if not attempts:
+            continue
+        payload = attempts[0]
+        argv = payload["argv"]
+        check(f"S15 {pipeline}: launched the codex-style invocation",
+              "exec" in argv[1:], " ".join(argv))
+        check(f"S15 {pipeline}: claude flags absent",
+              "-p" not in argv, " ".join(argv))
+        check(f"S15 {pipeline}: forced chatgpt login flag present",
+              _contains_pair(argv, _FORCED_LOGIN_PAIRS[0]), " ".join(argv))
+        check(f"S15 {pipeline}: file credential store flag present",
+              _contains_pair(argv, _FORCED_LOGIN_PAIRS[1]), " ".join(argv))
+        check(f"S15 {pipeline}: inherited CODEX_API_KEY scrubbed",
+              payload["codex_api_key_present"] is False, "")
+        check(f"S15 {pipeline}: inherited OPENAI_API_KEY scrubbed",
+              payload["openai_api_key_present"] is False, "")
+        check(f"S15 {pipeline}: unrelated ANTHROPIC_API_KEY preserved",
+              payload["anthropic_api_key_present"] is True, "")
+        check(f"S15 {pipeline}: prompt carried the recovery directive",
+              payload["prompt_mentions_recovery"] is True, "")
+        if pipeline == "sc":
+            check("S15 sc: methodology paths translated to the codex alias",
+                  payload["prompt_mentions_codex_path"] is True, "")
+        check(f"S15 {pipeline}: recovered files accepted (no still-missing)",
+              result == [], str(result))
+        check(f"S15 {pipeline}: pre-created verify targets exist",
+              (sp / "verify_F-1.md").exists(), "")
+
+
+def test_S16_recovery_codex_missing_oauth_fails_clearly_without_spawn():
+    fix, sp, marker, result, records = _run_recovery_with_fake(
+        pipeline="sc", with_auth=False,
+    )
+    check("S16a no spawn without OAuth", _attempt_payloads(marker) == [], "")
+    check("S16b all findings returned as still missing",
+          sorted(result) == ["F-1", "F-2"], str(result))
+    check("S16c clear subscription-OAuth failure logged",
+          any("subscription OAuth not available" in r for r in records),
+          " | ".join(records[-6:]))
+
+
+def test_S17_recovery_codex_model_rejection_retries_without_model():
+    fix, sp, marker, result, records = _run_recovery_with_fake(
+        pipeline="sc",
+        fake_env={"FAKE_FAIL_MODEL": "1", "FAKE_WRITE_VERIFY": "F-1,F-2"},
+    )
+    attempts = _attempt_payloads(marker)
+    check("S17a two attempts ran", len(attempts) == 2,
+          str([a.get("attempt") for a in attempts]))
+    if len(attempts) == 2:
+        first, second = attempts
+        check("S17b attempt 1 used --model", "--model" in first["argv"], "")
+        check("S17c attempt 2 dropped --model",
+              "--model" not in second["argv"], " ".join(second["argv"]))
+        check("S17d attempt 2 kept forced chatgpt login",
+              _contains_pair(second["argv"], _FORCED_LOGIN_PAIRS[0]), "")
+        check("S17e retry logged",
+              any("Retrying without --model" in r for r in records), "")
+    check("S17f recovered after retry", result == [], str(result))
+
+
+def test_S18_recovery_codex_auth_error_is_permanent_no_retry():
+    fix, sp, marker, result, records = _run_recovery_with_fake(
+        pipeline="sc", fake_env={"FAKE_AUTH_ERROR": "1"},
+    )
+    check("S18a single attempt only (auth failure is not retried)",
+          len(_attempt_payloads(marker)) == 1, "")
+    check("S18b clear permanent auth failure logged",
+          any("Codex authentication error" in r for r in records), "")
+    check("S18c findings returned as still missing",
+          sorted(result) == ["F-1", "F-2"], str(result))
+
+
+def test_S19_recovery_claude_backend_preserved():
+    """Explicit Claude-mode recovery keeps its launcher and flags."""
+    fix, sp, marker, result, records = _run_recovery_with_fake(
+        pipeline="sc", backend="claude", with_auth=False,
+        fake_env={"CODEX_API_KEY": "fake-1", "FAKE_WRITE_VERIFY": "F-1,F-2"},
+    )
+    attempts = _attempt_payloads(marker)
+    check("S19a one attempt ran", len(attempts) == 1, "")
+    if attempts:
+        argv = attempts[0]["argv"]
+        check("S19b claude launcher flags present",
+              "-p" in argv and "exec" not in argv, " ".join(argv))
+        check("S19c claude model flag present", "--model" in argv, "")
+        check("S19d claude recovery ignores the codex auth store",
+              "--ignore-user-config" not in argv, " ".join(argv))
+        check("S19e codex API keys scrubbed for claude too",
+              attempts[0]["codex_api_key_present"] is False, "")
+    check("S19f recovered without any Codex auth", result == [], str(result))
+
+
+def test_S20_codex_prompt_translation_requires_methodology_alias():
+    fix = _mkfix("alias")
+    text = "Read ~/.claude/rules/finding-output-format.md before writing."
+    with _env(HOME=str(fix / "noalias")):
+        raised = False
+        message = ""
+        try:
+            D._translate_prompt_for_codex(text, phase_name="verify_recovery")
+        except RuntimeError as exc:
+            raised = True
+            message = str(exc)
+    check("S20a missing $HOME/.codex/plamen raises RuntimeError", raised, "")
+    check("S20b message names the alias remediation",
+          ".codex" in message and "plamen" in message, message)
+    home = fix / "alias"
+    (home / ".codex" / "plamen").mkdir(parents=True)
+    with _env(HOME=str(home)):
+        translated = D._translate_prompt_for_codex(
+            text, phase_name="verify_recovery",
+        )
+    check("S20c methodology path rewritten to the alias",
+          "~/.codex/plamen/rules/finding-output-format.md" in translated,
+          translated[:200])
+
+
+def test_S21_recovery_codex_alias_missing_fails_clearly_without_spawn():
+    fix, sp, marker, result, records = _run_recovery_with_fake(
+        pipeline="sc", home_alias=False,
+    )
+    check("S21a no spawn without the methodology alias",
+          _attempt_payloads(marker) == [], "")
+    check("S21b clear translation failure logged",
+          any("prompt translation failed" in r for r in records),
+          " | ".join(records[-6:]))
+    check("S21c findings returned as still missing",
+          sorted(result) == ["F-1", "F-2"], str(result))
+
+
 def main() -> None:
     tests = [
         test_S1_chatgpt_file_in_codex_home_is_accepted,
@@ -319,6 +753,17 @@ def main() -> None:
         test_S8_cmd_builders_force_subscription_login,
         test_S9_fake_codex_launch_scrubbed_env_and_flags,
         test_S10_phase_timeout_clamp_restores_runnability,
+        test_S11_legacy_oauth_records_without_mode_are_accepted,
+        test_S12_structural_and_api_negatives_rejected,
+        test_S13_stale_but_structured_sessions_are_accepted,
+        test_S14_auth_error_detector_classifies_structure_failures,
+        test_S15_recovery_codex_launch_sc_and_l1,
+        test_S16_recovery_codex_missing_oauth_fails_clearly_without_spawn,
+        test_S17_recovery_codex_model_rejection_retries_without_model,
+        test_S18_recovery_codex_auth_error_is_permanent_no_retry,
+        test_S19_recovery_claude_backend_preserved,
+        test_S20_codex_prompt_translation_requires_methodology_alias,
+        test_S21_recovery_codex_alias_missing_fails_clearly_without_spawn,
     ]
     print(f"Running {len(tests)} subscription-only Codex tests...")
     for t in tests:

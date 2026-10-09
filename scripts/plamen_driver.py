@@ -5,6 +5,7 @@ that do `import plamen_driver as D` continue to work unchanged.
 """
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timedelta, timezone
 import json
 import logging
@@ -618,6 +619,82 @@ def _codex_home_dir() -> Path:
     return Path.home() / ".codex"
 
 
+def _looks_like_native_id_token(value: object) -> bool:
+    """Structurally mirror the native ID-token decode contract.
+
+    The pinned Codex loader accepts `header.payload.signature` (three
+    non-empty base64url segments whose payload decodes to a JSON claims
+    object) and rejects anything else with "invalid ID token format".
+    Matching that contract lets the preflight refuse records the native
+    loader would refuse, without treating a legitimately stale session as
+    unusable (expiry is refreshed natively, never rejected on age here).
+    """
+    if not isinstance(value, str):
+        return False
+    parts = value.split(".")
+    if len(parts) != 3 or not all(parts):
+        return False
+    if "=" in parts[1]:
+        # The native decoder uses base64 URL_SAFE_NO_PAD; padding is invalid.
+        return False
+    try:
+        padded = parts[1] + "=" * (-len(parts[1]) % 4)
+        payload = base64.urlsafe_b64decode(padded.encode("ascii"))
+        decoded = json.loads(payload.decode("utf-8"))
+    except Exception:
+        return False
+    return isinstance(decoded, dict)
+
+
+def _codex_tokens_usable(tokens: object) -> bool:
+    """Check a tokens object against the native TokenData structure.
+
+    `access_token` / `refresh_token` must be non-empty strings and
+    `id_token` must be a structurally native-loadable JWT. Token age is
+    intentionally NOT checked — Codex refreshes stale sessions itself, and
+    age alone is not unusability.
+    """
+    if not isinstance(tokens, dict):
+        return False
+    for field in ("access_token", "refresh_token"):
+        value = tokens.get(field)
+        if not isinstance(value, str) or not value.strip():
+            return False
+    return _looks_like_native_id_token(tokens.get("id_token"))
+
+
+def _codex_auth_record() -> "dict[str, object] | None":
+    """Return the Codex auth record when it is a usable ChatGPT session.
+
+    Mode resolution mirrors the pinned native loader (`resolved_mode`): an
+    explicit `auth_mode` wins; a missing or null mode falls back to API-key
+    when an `OPENAI_API_KEY` field is present, otherwise to ChatGPT. Only
+    the ChatGPT resolution is accepted (subscription-only policy): API-mode
+    and non-token records are rejected, and the operator file is never
+    rewritten. The record must also be structurally usable (tokens with a
+    native-loadable id_token) so a mode-only or malformed record fails the
+    preflight clearly instead of failing deep inside a phase.
+    """
+    auth_path = _codex_home_dir() / "auth.json"
+    if not auth_path.exists():
+        return None
+    try:
+        data = json.loads(auth_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    mode = data.get("auth_mode")
+    if mode is None:
+        # Native legacy resolution: an API key field wins over tokens.
+        mode = "apikey" if data.get("OPENAI_API_KEY") else "chatgpt"
+    if mode != "chatgpt":
+        return None
+    if not _codex_tokens_usable(data.get("tokens")):
+        return None
+    return data
+
+
 def _codex_auth_available() -> bool:
     """Check that ChatGPT-subscription OAuth is available for `codex exec`.
 
@@ -632,26 +709,19 @@ def _codex_auth_available() -> bool:
     requests and fails with retry/401 noise (or attempts interactive login
     under a TTY), so this preflight fails the phase clearly and early.
     """
-    return _codex_auth_is_chatgpt()
+    return _codex_auth_record() is not None
 
 
 def _codex_auth_is_chatgpt() -> bool:
-    """Return True when the Codex auth store holds a ChatGPT OAuth session.
+    """Return True when the Codex auth store holds a usable ChatGPT session.
 
-    ChatGPT-auth accounts cannot use the `--model` flag — the server rejects
-    all explicit model names with "not supported when using Codex with a
-    ChatGPT account"; the subscription tier determines the default model.
-    Only the stored auth file decides this: API-key environment variables
-    are not consulted (subscription-only policy).
+    Mirrors the pinned native resolved-mode semantics (a legacy record
+    without an explicit `auth_mode` resolves to ChatGPT when OAuth tokens
+    are present and no API key field is), then applies the structural token
+    checks. API-key environment variables are not consulted
+    (subscription-only policy).
     """
-    auth_path = _codex_home_dir() / "auth.json"
-    if not auth_path.exists():
-        return False
-    try:
-        data = json.loads(auth_path.read_text(encoding="utf-8"))
-    except Exception:
-        return False
-    return isinstance(data, dict) and data.get("auth_mode") == "chatgpt"
+    return _codex_auth_record() is not None
 
 
 # Subscription-only policy for every `codex exec` phase invocation.
@@ -851,6 +921,10 @@ def _detect_codex_auth_error(log_path: Path) -> bool:
     Auth errors (401/403, token expiry) should NOT trigger rate-limit pause
     logic — they need re-authentication, not backoff.
 
+    Native auth-store structure failures ("invalid ID token format",
+    missing token fields, "Token data is not available") are permanent
+    credential failures too, not retryable phase failures.
+
     IMPORTANT: Call _detect_codex_model_not_available BEFORE this function.
     Model-not-available (404/403 for missing model access) would otherwise
     match the 401/403 patterns here and cause a permanent halt instead of
@@ -869,7 +943,10 @@ def _detect_codex_auth_error(log_path: Path) -> bool:
     return bool(re.search(
         r"(?:status[=:\s]+401|HTTP\s+401"
         r"|(?:\"(?:type|code|message)\"\s*:\s*\"[^\"]*(?:unauthorized|invalid_api_key|authentication|auth)[^\"]*\")"
-        r"|(?:error|api error|provider error|codex error)[^\r\n]{0,160}(?:unauthorized|invalid_api_key|token[^\r\n]{0,40}expired|authentication[^\r\n]{0,40}failed|auth[^\r\n]{0,40}error))",
+        r"|(?:error|api error|provider error|codex error)[^\r\n]{0,160}(?:unauthorized|invalid_api_key|token[^\r\n]{0,40}expired|authentication[^\r\n]{0,40}failed|auth[^\r\n]{0,40}error)"
+        r"|(?:invalid\s+id[_ ]token(?:\s+format)?)"
+        r"|(?:missing\s+field[^\r\n]{0,24}id_token)"
+        r"|(?:token\s+data\s+is\s+not\s+available))",
         text, re.IGNORECASE,
     ))
 
@@ -961,6 +1038,22 @@ def _precreate_codex_artifacts(phase: "Phase", scratchpad: Path) -> None:
                     target.write_text("", encoding="utf-8")
                 except OSError:
                     pass
+
+
+def _precreate_codex_recovery_artifacts(
+    missing: list[tuple[str, dict]], scratchpad: Path,
+) -> None:
+    """Seed empty verify_<ID>.md targets for Codex's apply_patch (see
+    _precreate_codex_artifacts). Existing files are left untouched; a
+    recovery shard that still fails to fill a target leaves it below the
+    100-byte presence threshold, so downstream stubbing is unaffected."""
+    for fid, _row in missing:
+        target = scratchpad / f"verify_{fid}.md"
+        if not target.exists():
+            try:
+                target.write_text("", encoding="utf-8")
+            except OSError:
+                pass
 
 
 def _synthesize_depth_lifecycle_artifacts(
@@ -1608,6 +1701,44 @@ def _is_semantic_dedup_passthrough_failure(missing: list[Any]) -> bool:
     )
 
 
+def _run_recovery_attempt(
+    attempt_cmd: list[str],
+    attempt_log: Path,
+    *,
+    snap: Path,
+    project_root: str,
+    subprocess_env: dict[str, str],
+    popen_kwargs: dict[str, Any],
+    timeout: int,
+) -> bool:
+    """Spawn one recovery-shard attempt and wait for it (attempt 1/2).
+
+    Mirrors the ordinary phase spawn: snapshot file as stdin, merged
+    stdout/stderr log, session-scoped env and platform popen kwargs.
+    """
+    with attempt_log.open("w", encoding="utf-8", errors="replace") as out, \
+            snap.open("rb") as stdin_file:
+        try:
+            proc = subprocess.Popen(
+                attempt_cmd,
+                stdin=stdin_file, stdout=out, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace",
+                cwd=project_root,
+                env=subprocess_env,
+                **popen_kwargs,
+            )
+        except Exception as e:
+            log.warning(f"[verify_recovery] Popen failed: {e}")
+            return False
+
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _terminate_process_tree(proc, grace_s=10)
+            log.warning(f"[verify_recovery] timed out after {timeout}s")
+    return True
+
+
 def _run_verify_recovery_shard(
     config: dict,
     missing: list[tuple[str, dict]],
@@ -1683,7 +1814,9 @@ def _run_verify_recovery_shard(
     )
     full_prompt = recovery_directive + base_prompt
 
-    # Resolve model and timeout.
+    # Resolve backend / model / timeout.
+    backend = (config.get("cli_backend") or "claude").strip().lower()
+    codex_backend = backend == "codex"
     effective_model = "sonnet"
     mode = config.get("mode", "core")
     if mode == "light":
@@ -1693,7 +1826,46 @@ def _run_verify_recovery_shard(
         mode=mode, hypothesis_count=len(missing),
     )
 
-    # Write snapshot.
+    # Subscription-only policy (KCA-727): a Codex-mode recovery shard must use
+    # the same hardened auth check, prompt translation, command builder and
+    # scrubbed environment as ordinary phases — never the Claude launcher or
+    # the inherited API credentials.
+    codex_writable: list[str] = [
+        scratchpad.as_posix(), Path(config["project_root"]).as_posix(),
+    ]
+    if codex_backend:
+        # Same model mapping ordinary phases use for the Codex backend.
+        effective_model = _resolve_codex_model_alias(effective_model)
+        if not CODEX_BIN:
+            log.error(
+                "[verify_recovery] cli_backend=codex but codex binary not "
+                "found — cannot run recovery shard"
+            )
+            return [fid for fid, _ in missing]
+        if not _codex_auth_available():
+            log.error(
+                "[verify_recovery] Codex subscription OAuth not available — "
+                "cannot run recovery shard. API-key fallback is disabled for "
+                "Plamen; verify a valid ChatGPT login at $CODEX_HOME/auth.json "
+                "(run `codex login` for the deployment Codex home)."
+            )
+            return [fid for fid, _ in missing]
+        try:
+            full_prompt = _translate_prompt_for_codex(
+                full_prompt,
+                phase_name="verify_recovery",
+                pipeline=pipeline,
+                mode=mode,
+            )
+        except RuntimeError as e:
+            log.error(f"[verify_recovery] Codex prompt translation failed: {e}")
+            return [fid for fid, _ in missing]
+        # Seed empty verify_<ID>.md targets: Codex's apply_patch cannot create
+        # new files (see _precreate_codex_artifacts).
+        _precreate_codex_recovery_artifacts(missing, scratchpad)
+
+    # Write snapshot — the child's stdin source (the translated prompt for
+    # the Codex backend).
     snap = scratchpad / "_prompt_verify_recovery.attempt1.md"
     try:
         snap.write_text(full_prompt, encoding="utf-8")
@@ -1702,45 +1874,56 @@ def _run_verify_recovery_shard(
         return [fid for fid, _ in missing]
 
     # Build subprocess command.
-    cmd = [
-        CLAUDE_BIN, "-p",
-        "--model", effective_model,
-        "--output-format", "json",
-        "--no-session-persistence",
-        "--dangerously-skip-permissions",
-        "--add-dir", config["project_root"],
-        "--add-dir", plamen_home().as_posix(),
-    ]
+    if codex_backend:
+        olm_path = str(scratchpad / "_codex_output_verify_recovery.attempt1.md")
+        if config.get("_codex_skip_model"):
+            cmd = _build_codex_cmd_no_model(
+                output_last_message=olm_path,
+                writable_dirs=codex_writable,
+            )
+        else:
+            cmd = _build_codex_cmd(
+                effective_model,
+                output_last_message=olm_path,
+                writable_dirs=codex_writable,
+            )
+    else:
+        cmd = [
+            CLAUDE_BIN, "-p",
+            "--model", effective_model,
+            "--output-format", "json",
+            "--no-session-persistence",
+            "--dangerously-skip-permissions",
+            "--add-dir", config["project_root"],
+            "--add-dir", plamen_home().as_posix(),
+        ]
 
-    # Subprocess isolation (same as run_phase).
-    isolation_path = scratchpad / "_subprocess_isolation.json"
-    isolation_ok = False
-    try:
-        isolation_payload = '{"enabledPlugins":{},"hooks":{},"mcpServers":{}}'
-        if (
-            not isolation_path.exists()
-            or isolation_path.read_text(encoding="utf-8").strip()
-            != isolation_payload
-        ):
-            isolation_path.write_text(isolation_payload, encoding="utf-8")
-        isolation_ok = True
-    except Exception:
-        pass
-    cmd.extend(["--disallowedTools", "mcp__*"])
-    if isolation_ok:
-        iso = isolation_path.as_posix()
-        cmd.extend([
-            "--settings", iso,
-            "--strict-mcp-config", "--mcp-config", iso,
-        ])
+        # Subprocess isolation (same as run_phase; Claude backend only — the
+        # Codex CLI uses --ephemeral + --ignore-user-config instead).
+        isolation_path = scratchpad / "_subprocess_isolation.json"
+        isolation_ok = False
+        try:
+            isolation_payload = '{"enabledPlugins":{},"hooks":{},"mcpServers":{}}'
+            if (
+                not isolation_path.exists()
+                or isolation_path.read_text(encoding="utf-8").strip()
+                != isolation_payload
+            ):
+                isolation_path.write_text(isolation_payload, encoding="utf-8")
+            isolation_ok = True
+        except Exception:
+            pass
+        cmd.extend(["--disallowedTools", "mcp__*"])
+        if isolation_ok:
+            iso = isolation_path.as_posix()
+            cmd.extend([
+                "--settings", iso,
+                "--strict-mcp-config", "--mcp-config", iso,
+            ])
 
-    # Subprocess env.
-    subprocess_env = {
-        **os.environ,
-        "ANTHROPIC_DISABLE_AUTOUPDATE": "1",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": PLAMEN_OPUS_MODEL,
-        "PLAMEN_SCRATCHPAD": str(scratchpad),
-    }
+    # Subprocess env — same hardened environment path for both backends
+    # (scrubs inherited CODEX_API_KEY / OPENAI_API_KEY).
+    subprocess_env = _phase_subprocess_env(scratchpad)
 
     # Platform-specific Popen kwargs.
     popen_kwargs: dict[str, Any] = {}
@@ -1757,31 +1940,49 @@ def _run_verify_recovery_shard(
 
     log.info(
         f"[verify_recovery] spawning recovery shard for {len(missing)} "
-        f"findings (timeout={timeout}s, model={effective_model})"
+        f"findings (timeout={timeout}s, model={effective_model}, "
+        f"backend={backend})"
     )
 
-    with log_path.open("w", encoding="utf-8", errors="replace") as out, \
-            snap.open("rb") as stdin_file:
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                stdin=stdin_file, stdout=out, stderr=subprocess.STDOUT,
-                text=True, encoding="utf-8", errors="replace",
-                cwd=config["project_root"],
-                env=subprocess_env,
-                **popen_kwargs,
-            )
-        except Exception as e:
-            log.warning(f"[verify_recovery] Popen failed: {e}")
-            return [fid for fid, _ in missing]
+    spawned = _run_recovery_attempt(
+        cmd, log_path, snap=snap, project_root=config["project_root"],
+        subprocess_env=subprocess_env, popen_kwargs=popen_kwargs,
+        timeout=timeout,
+    )
+    if not spawned:
+        return [fid for fid, _ in missing]
 
-        try:
-            proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            _terminate_process_tree(proc, grace_s=10)
-            log.warning(
-                f"[verify_recovery] timed out after {timeout}s"
-            )
+    # Codex model-retry parity with run_phase: when the subscription plan
+    # rejects explicit model names ("not supported when using Codex with a
+    # ChatGPT account"), retry once without --model.
+    if codex_backend and _detect_codex_model_rejection(log_path):
+        log.warning(
+            "[verify_recovery] Codex rejected --model flag (ChatGPT-auth "
+            "restriction). Retrying without --model."
+        )
+        retry_log = scratchpad / "_stdio_verify_recovery.attempt2.log"
+        retry_olm = str(scratchpad / "_codex_output_verify_recovery.attempt2.md")
+        retry_cmd = _build_codex_cmd_no_model(
+            output_last_message=retry_olm,
+            writable_dirs=codex_writable,
+        )
+        retried = _run_recovery_attempt(
+            retry_cmd, retry_log, snap=snap,
+            project_root=config["project_root"],
+            subprocess_env=subprocess_env, popen_kwargs=popen_kwargs,
+            timeout=timeout,
+        )
+        if retried:
+            log_path = retry_log
+
+    if codex_backend and _detect_codex_auth_error(log_path):
+        log.error(
+            "[verify_recovery] Codex authentication error — the recovery "
+            "shard cannot proceed with the stored credentials (401/403, "
+            "expired session or unusable auth record). Re-run `codex login` "
+            "for the deployment Codex home ($CODEX_HOME); API-key fallback "
+            "is disabled for Plamen. This is a permanent failure."
+        )
 
     elapsed = time.monotonic() - start
     log.info(f"[verify_recovery] completed in {elapsed:.0f}s")
