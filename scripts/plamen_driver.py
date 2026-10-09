@@ -621,10 +621,10 @@ def _codex_home_dir() -> Path:
 
 
 _RFC3339_TIMESTAMP_RE = re.compile(
-    r"^(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})[Tt ]"
-    r"(?P<hour>\d{2}):(?P<minute>\d{2}):(?P<second>\d{2})"
-    r"(?:\.\d+)?"
-    r"(?P<offset>[Zz]|[+-]\d{2}:\d{2})"
+    r"^(?P<year>[0-9]{4})-(?P<month>[0-9]{2})-(?P<day>[0-9]{2})[Tt ]"
+    r"(?P<hour>[0-9]{2}):(?P<minute>[0-9]{2}):(?P<second>[0-9]{2})"
+    r"(?:\.[0-9]+)?"
+    r"(?P<offset>[Zz]|[+-][0-9]{2}:[0-9]{2})"
     r"[ \t\r\n]*$"
 )
 
@@ -694,8 +694,21 @@ class _PairsDict(dict):
 
 
 def _json_dupsafe(text: str) -> object:
-    """Parse JSON while preserving duplicate-key occurrences."""
-    return json.loads(text, object_pairs_hook=_PairsDict)
+    """Parse JSON while preserving duplicate-key occurrences.
+
+    `NaN` / `Infinity` / `-Infinity` are Python extensions that the native
+    serde_json parser refuses ("expected value"); rejecting them here keeps
+    the preflight at native parity."""
+    return json.loads(
+        text,
+        object_pairs_hook=_PairsDict,
+        parse_constant=_reject_json_constant,
+    )
+
+
+def _reject_json_constant(constant: str):
+    """Reject non-JSON numeric constants (NaN/Infinity/-Infinity)."""
+    raise ValueError(f"non-JSON numeric constant: {constant}")
 
 
 def _field_occurrences(mapping: object, key: str) -> list:
@@ -708,6 +721,16 @@ def _field_occurrences(mapping: object, key: str) -> list:
     if pairs is None:
         return [mapping[key]] if key in mapping else []
     return [value for pair_key, value in pairs if pair_key == key]
+
+
+def _has_duplicate_known_fields(mapping: object, keys: tuple) -> bool:
+    """True when any native-known field appears more than once.
+
+    The native serde derive rejects repeated fields ("duplicate field
+    `name`"), regardless of the values — so any duplicate of a known field
+    makes the record unusable. Duplicates of unknown fields stay ignored,
+    like the native serde scan."""
+    return any(len(_field_occurrences(mapping, key)) > 1 for key in keys)
 
 
 _KNOWN_AUTH_MODES = ("apikey", "chatgpt", "chatgptAuthTokens", "agentIdentity")
@@ -725,9 +748,15 @@ def _native_claims_usable(claims: dict) -> bool:
     A wrong-typed known claim fails the native load — and serde then
     echoes the offending value in the error text — so the preflight must
     refuse it before any phase can reach the provider. Duplicate keys are
-    scanned occurrence-by-occurrence: Python collapses them (last wins),
-    but native serde fails on an earlier wrong-typed occurrence.
+    rejected like the native serde derive: a repeated known field fails
+    with "duplicate field" regardless of the values (duplicates of unknown
+    fields stay ignored).
     """
+    if _has_duplicate_known_fields(
+        claims,
+        ("email", "https://api.openai.com/profile", "https://api.openai.com/auth"),
+    ):
+        return False
     for email in _field_occurrences(claims, "email"):
         if not _optional_string_ok(email):
             return False
@@ -736,6 +765,8 @@ def _native_claims_usable(claims: dict) -> bool:
             continue
         if not isinstance(profile, dict):
             return False
+        if _has_duplicate_known_fields(profile, ("email",)):
+            return False
         for email in _field_occurrences(profile, "email"):
             if not _optional_string_ok(email):
                 return False
@@ -743,6 +774,12 @@ def _native_claims_usable(claims: dict) -> bool:
         if auth is None:
             continue
         if not isinstance(auth, dict):
+            return False
+        if _has_duplicate_known_fields(
+            auth,
+            ("chatgpt_plan_type", "chatgpt_user_id", "user_id",
+             "chatgpt_account_id", "chatgpt_account_is_fedramp"),
+        ):
             return False
         for field in (
             "chatgpt_plan_type", "chatgpt_user_id", "user_id",
@@ -929,6 +966,27 @@ def _stream_sanitized_log(stream, log_file, values: list[str]) -> None:
         pass
 
 
+def _drain_pipe_reader(
+    reader: "Optional[threading.Thread]", stream_stdout,
+) -> None:
+    """Join the sanitized-log reader and close its pipe without blocking.
+
+    The reader reaches EOF — and this helper returns promptly — only once
+    the owned child is gone, so cancellation handlers terminate the child
+    tree first. Closing is skipped while the reader is somehow still alive
+    so cleanup can never block on a half-dead pipe.
+    """
+    if reader is not None:
+        reader.join(timeout=10)
+    if stream_stdout is not None and (
+        reader is None or not reader.is_alive()
+    ):
+        try:
+            stream_stdout.close()
+        except Exception:
+            pass
+
+
 def _looks_like_native_id_token(value: object) -> bool:
     """Structurally mirror the native ID-token decode contract.
 
@@ -980,9 +1038,14 @@ def _codex_tokens_usable(tokens: object) -> bool:
     Option<String> — anything else fails the whole auth-store load).
     Token age is intentionally NOT checked — Codex refreshes stale
     sessions itself, and age alone is not unusability. Duplicate keys are
-    validated per occurrence, like the native serde scan.
+    rejected like the native serde derive (repeated known fields fail with
+    "duplicate field").
     """
     if not isinstance(tokens, dict):
+        return False
+    if _has_duplicate_known_fields(
+        tokens, ("id_token", "access_token", "refresh_token", "account_id"),
+    ):
         return False
     for field in ("access_token", "refresh_token"):
         occurrences = _field_occurrences(tokens, field)
@@ -1010,8 +1073,9 @@ def _codex_auth_record() -> "dict[str, object] | None":
     ChatGPT otherwise. Wrong-typed native fields (`auth_mode`,
     `OPENAI_API_KEY`, `last_refresh`, `agent_identity`, token shapes) make
     the whole record unusable and are refused, occurrence-by-occurrence —
-    duplicate keys that Python collapses (last wins) fail natively on an
-    earlier wrong-typed occurrence, so they must fail here too. Only the
+    duplicates of any native-known field are rejected like the native serde
+    derive ("duplicate field" for repeated fields, regardless of values),
+    and wrong-typed occurrences fail like the native type checks. Only the
     ChatGPT resolution is accepted (subscription-only policy): API-mode and
     non-token records are rejected, and the operator file is never
     rewritten. The record must also be structurally usable (tokens with a
@@ -1026,6 +1090,12 @@ def _codex_auth_record() -> "dict[str, object] | None":
     except Exception:
         return None
     if not isinstance(data, dict):
+        return None
+    if _has_duplicate_known_fields(
+        data,
+        ("auth_mode", "OPENAI_API_KEY", "tokens", "last_refresh",
+         "agent_identity"),
+    ):
         return None
     for mode_value in _field_occurrences(data, "auth_mode"):
         if mode_value is None:
@@ -1358,6 +1428,8 @@ def _detect_codex_auth_error(log_path: Path) -> bool:
         r"|(?:invalid\s+input\s+length[^\r\n]{0,20}\d+)"
         r"|(?:input\s+contains\s+invalid\s+characters[^\r\n]{0,60}at\s+line\s+\d+\s+column\s+\d+)"
         r"|(?:input\s+is\s+out\s+of\s+range[^\r\n]{0,60}at\s+line\s+\d+\s+column\s+\d+)"
+        r"|(?:duplicate\s+field[^\r\n]{0,60}at\s+line\s+\d+\s+column\s+\d+)"
+        r"|(?:invalid\s+number[^\r\n]{0,60}at\s+line\s+\d+\s+column\s+\d+)"
         r"|(?:auth[\s-]store\s+load\s+error)"
         r"|(?:chatgpt\s+login\s+is\s+required[^\r\n]{0,80}api\s+key))",
         text, re.IGNORECASE,
@@ -2176,14 +2248,13 @@ def _run_recovery_attempt(
         except subprocess.TimeoutExpired:
             _terminate_process_tree(proc, grace_s=10)
             log.warning(f"[verify_recovery] timed out after {timeout}s")
+        except BaseException:
+            # Cancellation (SIGINT/…): stop the owned child tree first so
+            # the pipe reader reaches EOF, then propagate the cancellation.
+            _terminate_process_tree(proc, grace_s=5)
+            raise
         finally:
-            if stream_reader is not None:
-                stream_reader.join(timeout=30)
-            if stream_stdout is not None:
-                try:
-                    stream_stdout.close()
-                except Exception:
-                    pass
+            _drain_pipe_reader(stream_reader, stream_stdout)
     return True
 
 
@@ -3123,14 +3194,14 @@ def run_phase(phase: Phase, config: dict, attempt: int) -> int:
             _terminate_process_tree(proc, grace_s=10)
             log.warning(f"[{phase.name}] timed out after {timeout}s")
             rc = -2  # timeout sentinel
+        except BaseException:
+            # Cancellation (SIGINT/…): _wait_with_heartbeat already
+            # terminates the child, but keep the guarantee on every exit
+            # path, then propagate the cancellation.
+            _terminate_process_tree(proc, grace_s=5)
+            raise
         finally:
-            if stream_reader is not None:
-                stream_reader.join(timeout=30)
-            if stream_stdout is not None:
-                try:
-                    stream_stdout.close()
-                except Exception:
-                    pass
+            _drain_pipe_reader(stream_reader, stream_stdout)
 
     # Copy to canonical so detect_rate_limit finds latest
     try:

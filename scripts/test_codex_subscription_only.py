@@ -35,6 +35,13 @@ Covers the driver's subscription-only enforcement:
   - Value-bearing auth diagnostics (serde echoes of record values) are
     scrubbed from persisted attempt/canonical/recovery logs, with audit
     content preserved and the redacted marker still classifiable.
+  - Native duplicate-field rejection: repeated known fields fail like the
+    serde derive ("duplicate field") in records, tokens and JWT claims;
+    NaN/Infinity/-Infinity (Python-only JSON extensions) are refused;
+    duplicates of unknown fields stay ignored.
+  - Cancellation safety: SIGINT during a phase or recovery attempt
+    stops/reaps the owned child tree, completes promptly, propagates the
+    interruption, and never leaves raw values in the logs.
   - _run_verify_recovery_shard: a Codex-mode recovery shard uses the same
     hardened auth check, prompt translation, command builder, model retry
     and scrubbed environment as ordinary phases; Claude-mode behavior is
@@ -57,6 +64,7 @@ import os
 import re
 import stat
 import subprocess
+import signal
 import sys
 import tempfile
 import threading
@@ -1064,6 +1072,8 @@ def test_S28_native_timestamp_parity():
             "2099-01-01T00:00:00+24:00", False),
         ("colon-less offset refused", "2026-01-01T00:00:00+0000", False),
         ("trailing junk refused", "2026-01-01T00:00:00Z junk", False),
+        ("fullwidth digits refused (ASCII-only grammar)",
+            "２０９９-01-01T00:00:00Z", False),
     )
     for label, value, want in cases:
         home = _case_dir(fix, label)
@@ -1408,6 +1418,222 @@ def test_S33_auth_values_never_persisted_before_cleanup():
     check("S33e run completed", "rc" in result, "")
 
 
+# --------------------------------------------------------------------------
+# Round-6: native duplicate-field rejection, non-JSON constants, remaining
+# load-error families, cancellation reaping (review of 5f5ad00)
+# --------------------------------------------------------------------------
+
+def _claim_record(raw_claims: str) -> dict:
+    record = json.loads(json.dumps(_FAKE_CHATGPT_AUTH))
+    parts = record["tokens"]["id_token"].split(".")
+    parts[1] = base64.urlsafe_b64encode(raw_claims.encode()).rstrip(b"=").decode()
+    record["tokens"]["id_token"] = ".".join(parts)
+    return record
+
+
+def test_S34_native_duplicate_known_fields_refused():
+    """Repeated native-known fields are rejected like the serde derive
+    ("duplicate field"), regardless of the values; duplicates of unknown
+    fields stay ignored; the store is never rewritten."""
+    fix = _mkfix("dupknown")
+    base = json.dumps(_FAKE_CHATGPT_AUTH)
+    claim_cases = {
+        "email_null": '{"email":null,"email":"fixture@example.invalid"}',
+        "profile_email":
+            '{"https://api.openai.com/profile":'
+            '{"email":null,"email":"fixture@example.invalid"}}',
+        "auth_object":
+            '{"https://api.openai.com/auth":null,'
+            '"https://api.openai.com/auth":{}}',
+        "fedramp_bool":
+            '{"https://api.openai.com/auth":'
+            '{"chatgpt_account_is_fedramp":false,'
+            '"chatgpt_account_is_fedramp":true}}',
+    }
+    raw_cases = [
+        ("duplicate auth_mode (well-typed)",
+         base.replace('"auth_mode": "chatgpt"',
+                      '"auth_mode":"chatgpt","auth_mode":"chatgpt"'), False),
+        ("duplicate access_token (well-typed)",
+         base.replace('"access_token": "fake-access-token"',
+                      '"access_token":"fake-access-token",'
+                      '"access_token":"fake-access-token"'), False),
+    ]
+    for label, raw_claims in claim_cases.items():
+        raw_cases.append(
+            (f"duplicate claim {label}",
+             json.dumps(_claim_record(raw_claims)), False)
+        )
+    raw_cases.append(
+        ("duplicate unknown fields ignored (compatibility control)",
+         json.dumps(_claim_record('{"future_field":1,"future_field":2}')), True)
+    )
+    for label, raw, want in raw_cases:
+        home = _case_dir(fix, label)
+        home.mkdir()
+        auth_path = home / "auth.json"
+        auth_path.write_text(raw, encoding="utf-8")
+        before = auth_path.read_bytes()
+        with _env(CODEX_HOME=str(home), HOME=str(fix)):
+            got = D._codex_auth_available()
+        check(f"S34 {label}", got is want, f"got {got} want {want}")
+        check(f"S34 {label}: store byte-identical",
+              auth_path.read_bytes() == before, "")
+
+
+def test_S35_non_json_constants_refused():
+    """NaN/Infinity/-Infinity are Python extensions native serde_json
+    refuses; both the record and the payload parser must reject them."""
+    fix = _mkfix("constants")
+    record_base = json.dumps(_FAKE_CHATGPT_AUTH)[:-1]
+    for index, constant in enumerate(("NaN", "Infinity", "-Infinity")):
+        for where in ("record", "claim"):
+            if where == "record":
+                raw = record_base + ',"future_field":' + constant + "}"
+            else:
+                raw = json.dumps(
+                    _claim_record('{"future_field":' + constant + "}")
+                )
+            home = _case_dir(fix, f"c{index}_{where}")
+            home.mkdir()
+            (home / "auth.json").write_text(raw, encoding="utf-8")
+            with _env(CODEX_HOME=str(home), HOME=str(fix)):
+                got = D._codex_auth_available()
+            check(f"S35 {constant} in {where} refused", got is False, "")
+
+
+def test_S36_remaining_native_load_error_families_classify():
+    """`duplicate field` and `invalid number` position-anchored diagnostics
+    classify as permanent auth failures; item-scoped copies do not."""
+    fix = _mkfix("families")
+    diagnostics = (
+        "duplicate field `auth_mode` at line 1 column 34",
+        "duplicate field `chatgpt_account_is_fedramp` at line 1 column 95",
+        "invalid number at line 1 column 499",
+        "expected value at line 1 column 17",
+    )
+    for index, diagnostic in enumerate(diagnostics):
+        plain = fix / f"plain_{index}.log"
+        plain.write_text(diagnostic + "\n", encoding="utf-8")
+        check(f"S36 classified: {diagnostic[:40]}",
+              D._detect_codex_auth_error(plain) is True, "")
+        scoped = fix / f"item_{index}.jsonl"
+        scoped.write_text(json.dumps({
+            "type": "item.completed",
+            "item": {"id": "item_1", "type": "agent_message",
+                     "text": diagnostic},
+        }) + "\n", encoding="utf-8")
+        check(f"S36 not classified in item: {diagnostic[:40]}",
+              D._detect_codex_auth_error(scoped) is False, "")
+
+
+def test_S37_cancellation_reaps_child_and_completes_quickly():
+    """SIGINT during a recovery attempt and an ordinary phase: the driver
+    stops/reaps the owned child, completes promptly, propagates the
+    interruption (rc 130), and the log never holds the raw value."""
+    marker = _S30_MARKER
+    scripts_dir = Path(__file__).resolve().parent
+    worker_src = """
+import os, pathlib, sys
+case = pathlib.Path(sys.argv[1]); route = sys.argv[2]
+sys.path.insert(0, %r)
+import plamen_driver as D
+import test_codex_subscription_only as T
+home = case / 'auth'
+T._write_auth(home, {'auth_mode': 'chatgpt', 'tokens': T._tokens(access_token=%r)})
+os.environ['CODEX_HOME'] = str(home)
+os.environ['PLAMEN_PLAIN_OUTPUT'] = '1'
+D.CODEX_BIN = str(case / 'fake_provider.py')
+(case / 'prompt.txt').write_text('Synthetic prompt only.')
+try:
+    if route == 'phase':
+        phase = next(p for p in D.SC_PHASES if p.name == 'recon')
+        D.run_phase(phase, {'scratchpad': str(case/'scratch'),
+                            'project_root': str(case/'project'),
+                            'pipeline': 'sc', 'language': 'solidity',
+                            'mode': 'light', 'cli_backend': 'codex'}, 1)
+    else:
+        D._run_recovery_attempt([sys.executable, str(case/'fake_provider.py')],
+            case/'scratch'/'_stdio_verify_recovery.attempt1.log',
+            snap=case/'prompt.txt', project_root=str(case/'project'),
+            subprocess_env=dict(os.environ),
+            popen_kwargs={'start_new_session': True},
+            timeout=120, sanitize_stream=True)
+except KeyboardInterrupt:
+    print('REVIEW_SIGINT_PROPAGATED', flush=True)
+    sys.exit(130)
+""" % (str(scripts_dir), marker)
+    diagnostic = 'invalid type: string "%s", expected a boolean at line 1 column 94' % marker
+    for route in ("recovery", "phase"):
+        case = _mkfix(f"sigint_{route}")
+        (case / "scratch").mkdir()
+        (case / "project").mkdir()
+        fake = case / "fake_provider.py"
+        fake.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, pathlib, time\n"
+            "pathlib.Path(%r).write_text(str(os.getpid()))\n"
+            "print(%r, flush=True)\n"
+            "time.sleep(120)\n"
+            % (str(case / "provider.pid"), diagnostic),
+            encoding="utf-8",
+        )
+        fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+        worker = case / "worker.py"
+        worker.write_text(worker_src, encoding="utf-8")
+        env = {**os.environ, "PLAMEN_HOME": str(scripts_dir.parent)}
+        driver = subprocess.Popen(
+            [sys.executable, str(worker), str(case), route],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            env=env, start_new_session=True,
+        )
+        log = case / "scratch" / (
+            "_stdio_verify_recovery.attempt1.log" if route == "recovery"
+            else "_stdio_recon.attempt1.log")
+        provider_pid = None
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            pid_file = case / "provider.pid"
+            if pid_file.exists():
+                provider_pid = int(pid_file.read_text())
+            if provider_pid and log.exists() and log.stat().st_size:
+                break
+            time.sleep(0.02)
+        check(f"S37 {route}: control ready",
+              bool(provider_pid and log.exists() and log.stat().st_size), "")
+        start = time.monotonic()
+        os.kill(driver.pid, signal.SIGINT)
+        try:
+            out, _ = driver.communicate(timeout=10)
+            finished = True
+        except subprocess.TimeoutExpired:
+            finished = False
+            out = ""
+            os.killpg(driver.pid, signal.SIGKILL)
+            driver.communicate(timeout=5)
+        elapsed = time.monotonic() - start
+        provider_dead = False
+        if provider_pid is not None:
+            try:
+                os.kill(provider_pid, 0)
+            except ProcessLookupError:
+                provider_dead = True
+        if provider_pid is not None and not provider_dead:
+            try:
+                os.killpg(provider_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        text = log.read_text(encoding="utf-8", errors="replace")
+        check(f"S37 {route}: driver completed promptly",
+              finished and elapsed < 10, f"finished={finished} elapsed={elapsed:.2f}")
+        check(f"S37 {route}: interruption propagated (rc 130)",
+              driver.returncode == 130 and "REVIEW_SIGINT_PROPAGATED" in out,
+              f"rc={driver.returncode}")
+        check(f"S37 {route}: owned child reaped", provider_dead, "")
+        check(f"S37 {route}: log sanitized",
+              marker not in text and "auth-store load error" in text, "")
+
+
 def main() -> None:
     tests = [
         test_S1_chatgpt_file_in_codex_home_is_accepted,
@@ -1443,6 +1669,10 @@ def main() -> None:
         test_S31_duplicate_key_and_known_field_strictness,
         test_S32_quoted_quota_text_scoping,
         test_S33_auth_values_never_persisted_before_cleanup,
+        test_S34_native_duplicate_known_fields_refused,
+        test_S35_non_json_constants_refused,
+        test_S36_remaining_native_load_error_families_classify,
+        test_S37_cancellation_reaps_child_and_completes_quickly,
     ]
     print(f"Running {len(tests)} subscription-only Codex tests...")
     for t in tests:
