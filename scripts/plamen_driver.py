@@ -634,13 +634,24 @@ def _looks_like_native_id_token(value: object) -> bool:
     parts = value.split(".")
     if len(parts) != 3 or not all(parts):
         return False
-    if "=" in parts[1]:
-        # The native decoder uses base64 URL_SAFE_NO_PAD; padding is invalid.
+    payload_b64 = parts[1]
+    # Strict native alphabet and length: the pinned decoder uses
+    # base64::URL_SAFE_NO_PAD, so padding and any character outside
+    # [A-Za-z0-9_-] are invalid (Python's decoder would silently ignore
+    # them — e.g. "!!!!" appended to an otherwise valid payload segment).
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", payload_b64):
+        return False
+    if len(payload_b64) % 4 == 1:
         return False
     try:
-        padded = parts[1] + "=" * (-len(parts[1]) % 4)
-        payload = base64.urlsafe_b64decode(padded.encode("ascii"))
-        decoded = json.loads(payload.decode("utf-8"))
+        raw = base64.urlsafe_b64decode(
+            payload_b64 + "=" * (-len(payload_b64) % 4)
+        )
+        # Canonical encoding: the native decoder rejects non-zero trailing
+        # bits, so a canonical segment must round-trip when re-encoded.
+        if base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != payload_b64:
+            return False
+        decoded = json.loads(raw.decode("utf-8"))
     except Exception:
         return False
     return isinstance(decoded, dict)
@@ -650,15 +661,21 @@ def _codex_tokens_usable(tokens: object) -> bool:
     """Check a tokens object against the native TokenData structure.
 
     `access_token` / `refresh_token` must be non-empty strings and
-    `id_token` must be a structurally native-loadable JWT. Token age is
-    intentionally NOT checked — Codex refreshes stale sessions itself, and
-    age alone is not unusability.
+    `id_token` must be a structurally native-loadable JWT; `account_id`,
+    when present, must be a string or null (native types it as
+    Option<String> — anything else fails the whole auth-store load).
+    Token age is intentionally NOT checked — Codex refreshes stale
+    sessions itself, and age alone is not unusability.
     """
     if not isinstance(tokens, dict):
         return False
     for field in ("access_token", "refresh_token"):
         value = tokens.get(field)
         if not isinstance(value, str) or not value.strip():
+            return False
+    if "account_id" in tokens:
+        account_id = tokens.get("account_id")
+        if account_id is not None and not isinstance(account_id, str):
             return False
     return _looks_like_native_id_token(tokens.get("id_token"))
 
@@ -667,13 +684,17 @@ def _codex_auth_record() -> "dict[str, object] | None":
     """Return the Codex auth record when it is a usable ChatGPT session.
 
     Mode resolution mirrors the pinned native loader (`resolved_mode`): an
-    explicit `auth_mode` wins; a missing or null mode falls back to API-key
-    when an `OPENAI_API_KEY` field is present, otherwise to ChatGPT. Only
-    the ChatGPT resolution is accepted (subscription-only policy): API-mode
-    and non-token records are rejected, and the operator file is never
-    rewritten. The record must also be structurally usable (tokens with a
-    native-loadable id_token) so a mode-only or malformed record fails the
-    preflight clearly instead of failing deep inside a phase.
+    explicit `auth_mode` wins; a missing or null mode resolves to API-key
+    when the `OPENAI_API_KEY` field is present-and-not-null
+    (`Option::is_some()` semantics — an empty string still counts) and to
+    ChatGPT otherwise. Wrong-typed native fields (`auth_mode`,
+    `OPENAI_API_KEY`, `last_refresh`) make the whole record unusable and
+    are refused. Only the ChatGPT resolution is accepted (subscription-only
+    policy): API-mode and non-token records are rejected, and the operator
+    file is never rewritten. The record must also be structurally usable
+    (tokens with a native-loadable id_token) so a mode-only or malformed
+    record fails the preflight clearly instead of failing deep inside a
+    phase.
     """
     auth_path = _codex_home_dir() / "auth.json"
     if not auth_path.exists():
@@ -685,9 +706,23 @@ def _codex_auth_record() -> "dict[str, object] | None":
     if not isinstance(data, dict):
         return None
     mode = data.get("auth_mode")
+    if mode is not None and not isinstance(mode, str):
+        # Native serde rejects a wrong-typed auth_mode outright.
+        return None
+    api_key = data.get("OPENAI_API_KEY")
+    if api_key is not None and not isinstance(api_key, str):
+        # Native serde rejects a wrong-typed API-key field outright.
+        return None
+    last_refresh = data.get("last_refresh")
+    if last_refresh is not None and not isinstance(last_refresh, str):
+        # Native serde parses last_refresh as a timestamp; a non-string,
+        # non-null value fails the load.
+        return None
     if mode is None:
-        # Native legacy resolution: an API key field wins over tokens.
-        mode = "apikey" if data.get("OPENAI_API_KEY") else "chatgpt"
+        # Native legacy resolution mirrors Option::is_some() — an empty
+        # string is still present and wins over tokens; only absent or
+        # null falls through to ChatGPT.
+        mode = "apikey" if api_key is not None else "chatgpt"
     if mode != "chatgpt":
         return None
     if not _codex_tokens_usable(data.get("tokens")):
@@ -923,7 +958,11 @@ def _detect_codex_auth_error(log_path: Path) -> bool:
 
     Native auth-store structure failures ("invalid ID token format",
     missing token fields, "Token data is not available") are permanent
-    credential failures too, not retryable phase failures.
+    credential failures too, not retryable phase failures — as are serde/
+    base64 load errors (position-anchored "invalid type/value: ... at line
+    N column M", "Invalid symbol N, offset M") and the forced-login
+    violation ("ChatGPT login is required, but an API key is currently
+    being used").
 
     IMPORTANT: Call _detect_codex_model_not_available BEFORE this function.
     Model-not-available (404/403 for missing model access) would otherwise
@@ -946,7 +985,13 @@ def _detect_codex_auth_error(log_path: Path) -> bool:
         r"|(?:error|api error|provider error|codex error)[^\r\n]{0,160}(?:unauthorized|invalid_api_key|token[^\r\n]{0,40}expired|authentication[^\r\n]{0,40}failed|auth[^\r\n]{0,40}error)"
         r"|(?:invalid\s+id[_ ]token(?:\s+format)?)"
         r"|(?:missing\s+field[^\r\n]{0,24}id_token)"
-        r"|(?:token\s+data\s+is\s+not\s+available))",
+        r"|(?:token\s+data\s+is\s+not\s+available)"
+        r"|(?:invalid\s+(?:type|length|value):[^\r\n]{0,80}at\s+line\s+\d+\s+column\s+\d+)"
+        r"|(?:missing\s+field[^\r\n]{0,60}at\s+line\s+\d+\s+column\s+\d+)"
+        r"|(?:(?:eof\s+while\s+parsing|expected\s+value|trailing\s+characters|key\s+must\s+be\s+a\s+string)[^\r\n]{0,60}at\s+line\s+\d+\s+column\s+\d+)"
+        r"|(?:invalid\s+(?:symbol|last\s+symbol)\s+\d+,\s*offset\s+\d+)"
+        r"|(?:invalid\s+input\s+length[^\r\n]{0,20}\d+)"
+        r"|(?:chatgpt\s+login\s+is\s+required[^\r\n]{0,80}api\s+key))",
         text, re.IGNORECASE,
     ))
 

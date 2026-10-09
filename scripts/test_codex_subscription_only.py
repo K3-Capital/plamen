@@ -17,6 +17,15 @@ Covers the driver's subscription-only enforcement:
     -c overrides even though phase invocations use --ignore-user-config
   - _detect_codex_auth_error: native auth-store structure failures are
     classified as permanent credential failures.
+  - Native key-field parity: missing/null auth_mode x absent/null/empty/
+    nonempty/wrong-typed API-key fields follow the pinned Option::is_some()
+    resolution; wrong-typed native fields fail the record.
+  - Strict native JWT payload decoding: alphabet, length and canonicality
+    (URL_SAFE_NO_PAD), so characters Python's decoder ignores and
+    non-canonical tails are refused.
+  - Launch-path refusal: native API-mode records are refused before any
+    child launch, with the auth store left byte-identical (no logout
+    mutation), via run_phase and the recovery shard.
   - _run_verify_recovery_shard: a Codex-mode recovery shard uses the same
     hardened auth check, prompt translation, command builder, model retry
     and scrubbed environment as ordinary phases; Claude-mode behavior is
@@ -741,6 +750,204 @@ def test_S21_recovery_codex_alias_missing_fails_clearly_without_spawn():
           sorted(result) == ["F-1", "F-2"], str(result))
 
 
+# --------------------------------------------------------------------------
+# Native key-field resolution parity (review round 3, R1)
+# --------------------------------------------------------------------------
+
+def test_S22_native_key_field_resolution_parity():
+    """Missing/null auth_mode x key-field matrix, matched to the pinned
+    native resolved_mode(): explicit mode wins; otherwise the API-key
+    field decides by PRESENCE (Option::is_some() — an empty string still
+    resolves to API mode); wrong-typed fields fail the record."""
+    fix = _mkfix("keyfield")
+    tokens = _tokens()
+    cases = (
+        ("missing mode, key absent", {"tokens": tokens}, True),
+        ("missing mode, key null",
+            {"tokens": tokens, "OPENAI_API_KEY": None}, True),
+        ("null mode, key absent",
+            {"auth_mode": None, "tokens": tokens}, True),
+        ("null mode, key null",
+            {"auth_mode": None, "tokens": tokens, "OPENAI_API_KEY": None}, True),
+        ("missing mode, key empty",
+            {"tokens": tokens, "OPENAI_API_KEY": ""}, False),
+        ("missing mode, key nonempty",
+            {"tokens": tokens, "OPENAI_API_KEY": "fixture-key"}, False),
+        ("null mode, key empty",
+            {"auth_mode": None, "tokens": tokens, "OPENAI_API_KEY": ""}, False),
+        ("null mode, key nonempty",
+            {"auth_mode": None, "tokens": tokens,
+             "OPENAI_API_KEY": "fixture-key"}, False),
+        ("wrong-type key 42, missing mode",
+            {"tokens": tokens, "OPENAI_API_KEY": 42}, False),
+        ("wrong-type key 42, explicit chatgpt",
+            {"auth_mode": "chatgpt", "tokens": tokens,
+             "OPENAI_API_KEY": 42}, False),
+        ("wrong-type mode 42", {"auth_mode": 42, "tokens": tokens}, False),
+        ("wrong-type last_refresh 123",
+            {"tokens": tokens, "last_refresh": 123}, False),
+    )
+    for label, payload, want in cases:
+        home = fix / label.replace(",", "").replace(" ", "_")
+        _write_auth(home, payload)
+        with _env(CODEX_HOME=str(home), HOME=str(fix)):
+            got = D._codex_auth_available()
+            check(f"S22 {label}: accepted" if want else f"S22 {label}: refused",
+                  got is want, f"got {got} want {want}")
+
+
+def test_S23_strict_native_payload_decoding():
+    """Strict URL_SAFE_NO_PAD parity: alphabet, length, canonicality."""
+    fix = _mkfix("strict")
+    header, payload, sig = _fake_id_token().split(".")
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    # Non-canonical tail: the low bits of the last symbol are unused;
+    # flipping them keeps Python's decoded bytes but is rejected by the
+    # native strict decoder. Shape the payload length so 2 spare bits exist.
+    raw = json.dumps({"exp": 4102444800, "chatgpt_fixture": True}).encode("utf-8")
+    while len(base64.urlsafe_b64encode(raw).rstrip(b"=")) % 4 != 3:
+        raw += b" "
+    enc = base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+    last_bit_flipped = enc[:-1] + alphabet[alphabet.index(enc[-1]) ^ 1]
+    # A payload whose encoded length is 1 mod 4 is invalid base64.
+    bad_len = payload + "A" * ((1 - len(payload) % 4) % 4)
+    assert len(bad_len) % 4 == 1
+    cases = (
+        ("valid control", f"{header}.{payload}.{sig}", True),
+        ("signature with !!!! (never decoded natively)",   # native parity control
+            f"{header}.{payload}.{sig}!!!!", True),
+        ("payload with !! (ignored by Python's decoder)",
+            f"{header}.{payload}!!.{sig}", False),
+        ("payload with = padding", f"{header}.{payload}==.{sig}", False),
+        ("non-canonical trailing bits", f"{header}.{last_bit_flipped}.{sig}", False),
+        ("invalid encoded length (1 mod 4)", f"{header}.{bad_len}.{sig}", False),
+    )
+    for label, id_token, want in cases:
+        home = fix / label.replace(" ", "_").replace("!", "")
+        _write_auth(home, {"auth_mode": "chatgpt",
+                           "tokens": _tokens(id_token=id_token)})
+        with _env(CODEX_HOME=str(home), HOME=str(fix)):
+            got = D._codex_auth_available()
+            check(f"S23 {label}: accepted" if want else f"S23 {label}: refused",
+                  got is want, f"got {got} want {want}")
+
+
+def test_S24_typed_token_field_parity():
+    """Native TokenData types account_id as Option<String>."""
+    fix = _mkfix("typedfield")
+    cases = (
+        ("account_id string accepted",
+            _tokens(account_id="acct-fixture"), True),
+        ("account_id null accepted", _tokens(account_id=None), True),
+        ("account_id integer refused", _tokens(account_id=42), False),
+        ("account_id object refused", _tokens(account_id={"a": 1}), False),
+    )
+    for label, tokens, want in cases:
+        home = fix / label.replace(" ", "_")
+        _write_auth(home, {"auth_mode": "chatgpt", "tokens": tokens})
+        with _env(CODEX_HOME=str(home), HOME=str(fix)):
+            got = D._codex_auth_available()
+            check(f"S24 {label}", got is want, f"got {got} want {want}")
+
+
+def test_S25_native_load_failure_classification():
+    """Native auth-store load errors (serde-position anchored, strict
+    base64, forced-login violation) classify as permanent auth failures;
+    audit prose with line/column text does not."""
+    fix = _mkfix("classify3")
+
+    def _log(name: str, body: str) -> Path:
+        path = fix / name
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    true_cases = (
+        ("forced-login violation",
+         "ChatGPT login is required, but an API key is currently being used. Logging out."),
+        ("strict base64 symbol",
+         "Invalid symbol 33, offset 254. at line 1 column 425"),
+        ("strict base64 last symbol",
+         "Invalid last symbol 49, offset 58. at line 1 column 153"),
+        ("strict base64 input length",
+         "Invalid input length: 69 at line 1 column 163"),
+        ("serde invalid type",
+         "invalid type: integer `42`, expected a string at line 1 column 438"),
+        ("serde invalid value",
+         "invalid value: string \"garbage\", expected RFC 3339 date at line 1 column 52"),
+        ("serde missing field",
+         "missing field `access_token` at line 1 column 19"),
+        ("serde eof",
+         "EOF while parsing a value at line 1 column 0"),
+    )
+    false_cases = (
+        ("solidity parser prose",
+         "ParserError: Expected ';' but got '}' at line 5 column 3"),
+        ("audit prose with line/column",
+         "the invariant at line 3 column 2 was broken by reentrancy; see finding F-12"),
+    )
+    def _fn(label: str) -> str:
+        return label.replace("/", "-").replace(" ", "_") + ".log"
+
+    for label, body in true_cases:
+        check(f"S25 classified: {label}",
+              D._detect_codex_auth_error(_log(_fn(label), body)) is True, "")
+    for label, body in false_cases:
+        check(f"S25 not classified: {label}",
+              D._detect_codex_auth_error(_log(_fn(label), body)) is False, "")
+
+
+def test_S26_api_mode_record_refused_before_launch():
+    """R1 acceptance: a native-resolved API-mode record (empty key field)
+    is refused before any child launch, with the auth store left
+    byte-identical — via run_phase and via the recovery shard."""
+    fix = _mkfix("refuse")
+    sp = fix / "scratch"
+    sp.mkdir()
+    proj = fix / "proj"
+    proj.mkdir()
+    (fix / "home" / ".codex" / "plamen").mkdir(parents=True)
+    codex_home = fix / "codexhome"
+    _write_auth(codex_home, {"tokens": _tokens(), "OPENAI_API_KEY": ""})
+    auth_path = codex_home / "auth.json"
+    before = auth_path.read_bytes()
+
+    marker = fix / "markers"
+    fake = fix / "fake_agent.py"
+    fake.write_text(_FAKE_AGENT_SCRIPT, encoding="utf-8")
+    fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+    original_codex = D.CODEX_BIN
+    D.CODEX_BIN = str(fake)
+    try:
+        with _env(HOME=str(fix / "home"), CODEX_HOME=str(codex_home),
+                  FAKE_MARKER_DIR=str(marker), FAKE_SCRATCH=str(sp),
+                  PLAMEN_PLAIN_OUTPUT="1"):
+            phase = [ph for ph in D.SC_PHASES if ph.name == "breadth"][0]
+            phase_config = {
+                "scratchpad": str(sp), "pipeline": "sc",
+                "project_root": str(proj), "language": "solidity",
+                "mode": "light", "cli_backend": "codex",
+            }
+            rc = D.run_phase(phase, dict(phase_config), 1)
+            recovery = D._run_verify_recovery_shard(
+                dict(phase_config),
+                [("F-1", {"finding id": "F-1", "severity": "High",
+                          "title": "One"})],
+            )
+    finally:
+        D.CODEX_BIN = original_codex
+    check("S26a run_phase refused the native API-mode record (EXIT_ERROR)",
+          rc == D.EXIT_ERROR, f"rc={rc}")
+    check("S26b no child was launched (no marker)",
+          not (marker.exists() and list(marker.glob("attempt_*.json")))
+          and not (marker.exists() and list(marker.iterdir())), "")
+    check("S26c auth store bytes unchanged after run_phase",
+          auth_path.read_bytes() == before, "")
+    check("S26d recovery shard also refused",
+          recovery == ["F-1"], str(recovery))
+    check("S26e auth store still unchanged after recovery",
+          auth_path.read_bytes() == before, "")
+
+
 def main() -> None:
     tests = [
         test_S1_chatgpt_file_in_codex_home_is_accepted,
@@ -764,6 +971,11 @@ def main() -> None:
         test_S19_recovery_claude_backend_preserved,
         test_S20_codex_prompt_translation_requires_methodology_alias,
         test_S21_recovery_codex_alias_missing_fails_clearly_without_spawn,
+        test_S22_native_key_field_resolution_parity,
+        test_S23_strict_native_payload_decoding,
+        test_S24_typed_token_field_parity,
+        test_S25_native_load_failure_classification,
+        test_S26_api_mode_record_refused_before_launch,
     ]
     print(f"Running {len(tests)} subscription-only Codex tests...")
     for t in tests:
