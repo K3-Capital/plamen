@@ -1809,6 +1809,35 @@ def _reap_owned_leader(proc: subprocess.Popen) -> None:
         pass
 
 
+_OWNED_KILL_GRACE_S = 2.0
+
+
+def _shutdown_single_process(proc: subprocess.Popen, grace_s: float) -> bool:
+    """One bounded single-process shutdown pass.
+
+    Unguarded on purpose: the caller runs the whole shutdown inside an
+    operation-level guard, recovers from interruptions and verifies the
+    final state, never an aborted attempt."""
+    try:
+        proc.terminate()
+    except Exception:
+        pass
+    try:
+        proc.wait(timeout=grace_s)
+        return True
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        proc.kill()
+    except Exception:
+        pass
+    try:
+        proc.wait(timeout=_OWNED_KILL_GRACE_S)
+    except subprocess.TimeoutExpired:
+        pass
+    return proc.poll() is not None
+
+
 def _terminate_process_tree(proc: subprocess.Popen, grace_s: float = 5.0) -> bool:
     """Bounded owned-process cleanup; True once the whole tree is gone.
 
@@ -1818,12 +1847,15 @@ def _terminate_process_tree(proc: subprocess.Popen, grace_s: float = 5.0) -> boo
     the group, escalate to SIGKILL while any member remains, and only
     then report success.
 
-    Interruption-safe: a KeyboardInterrupt raised while the shutdown is
-    in flight (for example inside the TERM grace window) is preserved,
-    the bounded shutdown still continues to completion on the *same*
-    deadline — an interruption never restarts or resets the window — the
-    result is checked, and only then is the preserved interruption
-    re-raised. Windows stays a best-effort taskkill path.
+    Interruption-safe at the operation level: the whole shutdown sequence
+    (group selection, clock reads, deadline setup, signalling, probes,
+    reaping) runs inside one guard, so a KeyboardInterrupt raised at any
+    bytecode boundary — the TERM loop clock included — is preserved while
+    the bounded shutdown continues to completion on the *same* absolute
+    deadline (an interruption never restarts or resets the window). The
+    final state is verified directly and only then is the preserved
+    interruption re-raised; success is never inferred from an aborted
+    attempt. Windows stays a best-effort taskkill path.
     """
     if proc is None:
         return True
@@ -1848,134 +1880,82 @@ def _terminate_process_tree(proc: subprocess.Popen, grace_s: float = 5.0) -> boo
         return proc.poll() is not None
 
     pending = None
-
-    pgid = getattr(proc, "plamen_owned_pgid", None)
-    if pgid is None:
-        # Fallback: honor an actual own group if the child leads one.
+    pgid = None
+    term_deadline = None
+    result = False
+    attempts = 3
+    while attempts > 0:
+        attempts -= 1
+        # The whole shutdown attempt — group selection, clock reads,
+        # deadline setup, signalling, group probes and reaping — runs
+        # inside one operation-level guard. A cancellation raised at ANY
+        # bytecode boundary in here (the loop clock included) resumes the
+        # bounded shutdown on the same absolute deadline instead of
+        # aborting it.
         try:
-            if os.getpgid(proc.pid) == proc.pid:
-                pgid = proc.pid
-        except (ProcessLookupError, PermissionError, OSError):
-            pgid = None
-
-    if pgid is None:
-        # No owned group: single-process, bounded, interruption-safe.
-        try:
-            proc.terminate()
-        except BaseException as exc:
-            if pending is None:
-                pending = exc
-        done = False
-        try:
-            proc.wait(timeout=grace_s)
-            done = True
-        except subprocess.TimeoutExpired:
-            pass
-        except BaseException as exc:
-            if pending is None:
-                pending = exc
-        if not done:
-            try:
-                proc.kill()
-            except BaseException as exc:
-                if pending is None:
-                    pending = exc
-            try:
-                proc.wait(timeout=2.0)
-                done = True
-            except subprocess.TimeoutExpired:
-                pass
-            except BaseException as exc:
-                if pending is None:
-                    pending = exc
-        gone = done or proc.poll() is not None
-        if pending is not None:
-            raise pending
-        return gone
-
-    group_gone = False
-    try:
-        group_gone = not _owned_group_alive(pgid)
-    except BaseException as exc:
-        if pending is None:
-            pending = exc
-    if group_gone:
-        try:
-            _reap_owned_leader(proc)
-        except BaseException as exc:
-            if pending is None:
-                pending = exc
-        if pending is not None:
-            raise pending
-        return True
-    try:
-        os.killpg(pgid, signal.SIGTERM)
-    except ProcessLookupError:
-        try:
-            _reap_owned_leader(proc)
-        except BaseException as exc:
-            if pending is None:
-                pending = exc
-        if pending is not None:
-            raise pending
-        return True
-    except BaseException as exc:
-        if pending is None:
-            pending = exc
-    try:
-        _reap_owned_leader(proc)
-    except BaseException as exc:
-        if pending is None:
-            pending = exc
-
-    # One absolute TERM deadline, then one bounded KILL window. A
-    # KeyboardInterrupt aborts at most one sleep/probe; the loop resumes
-    # against the SAME deadlines, so an interruption can never extend or
-    # reset the shutdown window.
-    term_deadline = time.monotonic() + max(0.0, grace_s)
-    kill_deadline = None
-    while True:
-        try:
-            group_gone = not _owned_group_alive(pgid)
-        except BaseException as exc:
-            if pending is None:
-                pending = exc
-            group_gone = False
-        if group_gone:
-            break
-        now = time.monotonic()
-        if kill_deadline is None:
-            if now >= term_deadline:
+            if pgid is None:
+                pgid = getattr(proc, "plamen_owned_pgid", None)
+                if pgid is None:
+                    # Fallback: honor an actual own group if the child
+                    # leads one.
+                    try:
+                        if os.getpgid(proc.pid) == proc.pid:
+                            pgid = proc.pid
+                    except (ProcessLookupError, PermissionError, OSError):
+                        pgid = None
+            if term_deadline is None:
+                term_deadline = time.monotonic() + max(0.0, grace_s)
+            if pgid is None:
+                result = _shutdown_single_process(proc, grace_s)
+            elif not _owned_group_alive(pgid):
+                _reap_owned_leader(proc)
+                result = True
+            else:
                 try:
-                    os.killpg(pgid, signal.SIGKILL)
+                    os.killpg(pgid, signal.SIGTERM)
                 except ProcessLookupError:
-                    break
-                except BaseException as exc:
-                    if pending is None:
-                        pending = exc
-                kill_deadline = now + 2.0
-        elif now >= kill_deadline:
+                    _reap_owned_leader(proc)
+                    result = True
+                else:
+                    _reap_owned_leader(proc)
+                    kill_deadline = None
+                    while True:
+                        if not _owned_group_alive(pgid):
+                            break
+                        now = time.monotonic()
+                        if kill_deadline is None:
+                            if now >= term_deadline:
+                                try:
+                                    os.killpg(pgid, signal.SIGKILL)
+                                except ProcessLookupError:
+                                    break
+                                kill_deadline = now + _OWNED_KILL_GRACE_S
+                        elif now >= kill_deadline:
+                            break
+                        time.sleep(0.02)
+                    _reap_owned_leader(proc)
+                    result = not _owned_group_alive(pgid)
             break
-        try:
-            time.sleep(0.02)
         except BaseException as exc:
             if pending is None:
                 pending = exc
-
-    try:
-        _reap_owned_leader(proc)
-    except BaseException as exc:
-        if pending is None:
-            pending = exc
-    try:
-        group_gone = not _owned_group_alive(pgid)
-    except BaseException as exc:
-        if pending is None:
-            pending = exc
-        group_gone = False
+            result = False
+    # Never infer success from an aborted attempt: verify the actual final
+    # state directly whenever the sequence was interrupted or reported
+    # incomplete.
+    if pending is not None or not result:
+        try:
+            if pgid is not None:
+                result = not _owned_group_alive(pgid)
+            else:
+                result = proc.poll() is not None
+        except BaseException as exc:
+            if pending is None:
+                pending = exc
+            result = False
     if pending is not None:
         raise pending
-    return group_gone
+    return result
 
 
 def _reconcile_completed_checkpoint_artifacts(
