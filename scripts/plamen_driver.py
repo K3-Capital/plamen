@@ -5,6 +5,7 @@ that do `import plamen_driver as D` continue to work unchanged.
 """
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timedelta, timezone
 import json
 import logging
@@ -16,6 +17,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -605,36 +607,672 @@ def _codex_prompt_fits(prompt: str, model: str) -> bool:
     return estimated_tokens <= effective_limit
 
 
-def _codex_auth_available() -> bool:
-    """Check if Codex authentication is available (OAuth or API key).
+def _codex_home_dir() -> Path:
+    """Resolve the Codex home directory used for auth and configuration.
 
-    Without auth, `codex exec` will attempt interactive browser login,
-    hanging indefinitely in a subprocess with no TTY.
+    `codex exec` loads credentials from `$CODEX_HOME/auth.json` (and still
+    does so under `--ignore-user-config`), so the preflight must resolve the
+    same location instead of assuming `~/.codex`.
     """
-    if os.environ.get("CODEX_API_KEY") or os.environ.get("OPENAI_API_KEY"):
-        return True
-    auth_path = Path.home() / ".codex" / "auth.json"
-    return auth_path.exists()
+    raw = os.environ.get("CODEX_HOME", "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".codex"
+
+
+_RFC3339_TIMESTAMP_RE = re.compile(
+    r"^(?P<year>[0-9]{4})-(?P<month>[0-9]{2})-(?P<day>[0-9]{2})[Tt ]"
+    r"(?P<hour>[0-9]{2}):(?P<minute>[0-9]{2}):(?P<second>[0-9]{2})"
+    r"(?:\.[0-9]+)?"
+    r"(?P<offset>[Zz]|[+-][0-9]{2}:[0-9]{2})"
+    r"[ \t\r\n]*$"
+)
+
+
+def _days_in_month(year: int, month: int) -> int:
+    """Calendar days for a month (used by _looks_like_rfc3339_timestamp)."""
+    if month in (1, 3, 5, 7, 8, 10, 12):
+        return 31
+    if month in (4, 6, 9, 11):
+        return 30
+    leap = (year % 4 == 0 and year % 100 != 0) or year % 400 == 0
+    return 29 if leap else 28
+
+
+def _looks_like_rfc3339_timestamp(value: str) -> bool:
+    """Validate the RFC 3339 grammar the pinned native parser accepts.
+
+    Native `last_refresh` deserializes through chrono, which accepts
+    `T`/`t`/space separators, an optional fraction, `Z`/`z` or a `±HH:MM`
+    offset, a leap second (`:60`) and trailing whitespace — while
+    range-checking month/day and the offset components, so values that
+    Python's normalizer would silently accept (`+00:60`, `+01:99`,
+    `+24:00`) are refused exactly like native ("input is out of range").
+    Age is deliberately NOT a rejection criterion — native refresh
+    handles stale sessions.
+    """
+    match = _RFC3339_TIMESTAMP_RE.match(value)
+    if not match:
+        return False
+    year = int(match.group("year"))
+    month = int(match.group("month"))
+    day = int(match.group("day"))
+    hour = int(match.group("hour"))
+    minute = int(match.group("minute"))
+    second = int(match.group("second"))
+    if not 1 <= month <= 12:
+        return False
+    if not 1 <= day <= _days_in_month(year, month):
+        return False
+    if not 0 <= hour <= 23:
+        return False
+    if not 0 <= minute <= 59:
+        return False
+    if not 0 <= second <= 60:  # leap second
+        return False
+    offset = match.group("offset")
+    if offset not in ("Z", "z"):
+        if not 0 <= int(offset[1:3]) <= 23:
+            return False
+        if not 0 <= int(offset[4:6]) <= 59:
+            return False
+    return True
+
+
+class _PairsDict(dict):
+    """dict retaining the raw (key, value) pair list.
+
+    Python's json loader collapses duplicate object keys (last wins), but
+    the native serde scans fields in document order and fails on the first
+    wrong-typed occurrence — so strict validation must see every pair."""
+
+    __slots__ = ("pairs",)
+
+    def __init__(self, pairs):
+        super().__init__(pairs)
+        self.pairs = list(pairs)
+
+
+def _json_dupsafe(text: str) -> object:
+    """Parse JSON while preserving duplicate-key occurrences.
+
+    `NaN` / `Infinity` / `-Infinity` are Python extensions that the native
+    serde_json parser refuses ("expected value"); rejecting them here keeps
+    the preflight at native parity."""
+    return json.loads(
+        text,
+        object_pairs_hook=_PairsDict,
+        parse_constant=_reject_json_constant,
+    )
+
+
+def _reject_json_constant(constant: str):
+    """Reject non-JSON numeric constants (NaN/Infinity/-Infinity)."""
+    raise ValueError(f"non-JSON numeric constant: {constant}")
+
+
+def _field_occurrences(mapping: object, key: str) -> list:
+    """All values stored under `key`, in document order (duplicates
+    included). Plain mappings without pair records yield their single
+    value, if present."""
+    if not isinstance(mapping, dict):
+        return []
+    pairs = getattr(mapping, "pairs", None)
+    if pairs is None:
+        return [mapping[key]] if key in mapping else []
+    return [value for pair_key, value in pairs if pair_key == key]
+
+
+def _has_duplicate_known_fields(mapping: object, keys: tuple) -> bool:
+    """True when any native-known field appears more than once.
+
+    The native serde derive rejects repeated fields ("duplicate field
+    `name`"), regardless of the values — so any duplicate of a known field
+    makes the record unusable. Duplicates of unknown fields stay ignored,
+    like the native serde scan."""
+    return any(len(_field_occurrences(mapping, key)) > 1 for key in keys)
+
+
+_KNOWN_AUTH_MODES = ("apikey", "chatgpt", "chatgptAuthTokens", "agentIdentity")
+
+
+def _native_claims_usable(claims: dict) -> bool:
+    """Type-check the claims the pinned native IdClaims struct parses.
+
+    Native `parse_chatgpt_jwt_claims` deserializes the payload into
+    `IdClaims { email: Option<String>, "https://api.openai.com/profile":
+    Option<{email: Option<String>}>, "https://api.openai.com/auth":
+    Option<{chatgpt_plan_type: Option<String>, chatgpt_user_id /
+    user_id / chatgpt_account_id: Option<String>,
+    chatgpt_account_is_fedramp: bool}> }` with unknown fields ignored.
+    A wrong-typed known claim fails the native load — and serde then
+    echoes the offending value in the error text — so the preflight must
+    refuse it before any phase can reach the provider. Duplicate keys are
+    rejected like the native serde derive: a repeated known field fails
+    with "duplicate field" regardless of the values (duplicates of unknown
+    fields stay ignored).
+    """
+    if _has_duplicate_known_fields(
+        claims,
+        ("email", "https://api.openai.com/profile", "https://api.openai.com/auth"),
+    ):
+        return False
+    for email in _field_occurrences(claims, "email"):
+        if not _optional_string_ok(email):
+            return False
+    for profile in _field_occurrences(claims, "https://api.openai.com/profile"):
+        if profile is None:
+            continue
+        if not isinstance(profile, dict):
+            return False
+        if _has_duplicate_known_fields(profile, ("email",)):
+            return False
+        for email in _field_occurrences(profile, "email"):
+            if not _optional_string_ok(email):
+                return False
+    for auth in _field_occurrences(claims, "https://api.openai.com/auth"):
+        if auth is None:
+            continue
+        if not isinstance(auth, dict):
+            return False
+        if _has_duplicate_known_fields(
+            auth,
+            ("chatgpt_plan_type", "chatgpt_user_id", "user_id",
+             "chatgpt_account_id", "chatgpt_account_is_fedramp"),
+        ):
+            return False
+        for field in (
+            "chatgpt_plan_type", "chatgpt_user_id", "user_id",
+            "chatgpt_account_id",
+        ):
+            for value in _field_occurrences(auth, field):
+                if not _optional_string_ok(value):
+                    return False
+        for fedramp in _field_occurrences(auth, "chatgpt_account_is_fedramp"):
+            # Native types this as `bool` (serde default false): null and
+            # any non-boolean value fail the load.
+            if not isinstance(fedramp, bool):
+                return False
+    return True
+
+
+def _optional_string_ok(value: object) -> bool:
+    """Native `Option<String>` field shape: absent/null or a string."""
+    return value is None or isinstance(value, str)
+
+
+def _walk_string_values(node: object, values: list[str]) -> None:
+    """Collect distinctive string leaves (used by _auth_record_string_values)."""
+    if isinstance(node, str):
+        if len(node) >= 12:
+            values.append(node)
+    elif isinstance(node, dict):
+        for child in node.values():
+            _walk_string_values(child, values)
+    elif isinstance(node, list):
+        for child in node:
+            _walk_string_values(child, values)
+
+
+_VALUE_BEARING_AUTH_RE = re.compile(
+    r"invalid\s+(?:type|value)\s*:|unknown\s+variant\b", re.IGNORECASE,
+)
+_AUTH_LOGS_REDACTED_MARKER = (
+    "[auth-store load error: diagnostic redacted by the Plamen driver]"
+)
+
+
+def _codex_cli_signal_line(line: str) -> str | None:
+    """Return the CLI-signal text of one Codex log line, or None for
+    untrusted audit content.
+
+    Codex JSONL mixes trusted CLI diagnostics with untrusted audit
+    content. `item.*` events (agent messages, command output) and
+    thread/turn progress events are audit/tool content that must never
+    classify as — or be sanitized like — an auth failure. Raw non-JSON
+    lines (CLI stderr) and `error` / `turn.failed` event payloads carry
+    the actual failure signal.
+    """
+    stripped = line.strip()
+    if not stripped.startswith("{"):
+        return line
+    try:
+        event = json.loads(stripped)
+    except Exception:
+        return line
+    if not isinstance(event, dict):
+        return line
+    etype = event.get("type")
+    if isinstance(etype, str):
+        if etype.startswith("item.") or "item" in event:
+            return None
+        if etype in ("thread.started", "turn.started", "turn.completed"):
+            return None
+        if etype == "error":
+            message = event.get("message")
+            return str(message) if message is not None else line
+        if etype == "turn.failed":
+            error = event.get("error")
+            if isinstance(error, dict) and error.get("message") is not None:
+                return str(error.get("message"))
+            return str(error) if error is not None else line
+    return line
+
+
+def _codex_cli_signal_text(log_path: Path) -> str:
+    """Join the CLI-signal lines of a Codex log (see
+    _codex_cli_signal_line). An unreadable log yields an empty string."""
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return "\n".join(
+        signal for signal in
+        (_codex_cli_signal_line(line) for line in text.splitlines())
+        if signal is not None
+    )
+
+
+def _auth_record_string_values() -> list[str]:
+    """Distinctive string leaves of the stored auth record (best effort)."""
+    auth_path = _codex_home_dir() / "auth.json"
+    try:
+        data = json.loads(auth_path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    values: list[str] = []
+    _walk_string_values(data, values)
+    return sorted(set(values))
+
+
+def _scrub_auth_value_diagnostics(paths: list[Path]) -> None:
+    """Remove value-bearing native auth diagnostics from persisted logs.
+
+    Native auth-store load errors can echo the offending record value
+    (e.g. serde `invalid type: string "<value>", expected a boolean`).
+    Signal lines matching a value-bearing family are replaced with a
+    fixed marker (which stays classifiable for permanent-auth handling);
+    distinctive record values are additionally redacted within signal
+    lines. Audit/tool content in `item.*` events is never rewritten.
+    """
+    values = _auth_record_string_values()
+    for path in paths:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if not text:
+            continue
+        if not _VALUE_BEARING_AUTH_RE.search(text) and not any(
+            value in text for value in values
+        ):
+            continue
+        out_lines: list[str] = []
+        changed = False
+        for line in text.split("\n"):
+            signal = _codex_cli_signal_line(line)
+            if signal is None:
+                out_lines.append(line)
+                continue
+            if _VALUE_BEARING_AUTH_RE.search(signal):
+                out_lines.append(_AUTH_LOGS_REDACTED_MARKER)
+                changed = True
+                continue
+            new_line = line
+            for value in values:
+                if value in new_line:
+                    new_line = new_line.replace(value, "[redacted]")
+            if new_line != line:
+                changed = True
+            out_lines.append(new_line)
+        if changed:
+            try:
+                path.write_text(
+                    "\n".join(out_lines), encoding="utf-8", errors="replace",
+                )
+            except OSError:
+                pass
+
+
+def _sanitize_log_line(line: str, values: list[str]) -> str:
+    """Sanitize one raw child-output line before it is persisted.
+
+    Applied per line as the child writes (see _stream_sanitized_log), so
+    value-bearing auth diagnostics are never persisted even if the run is
+    interrupted before cleanup — the invariant holds at the first write,
+    not afterwards. Audit/tool content (`item.*` events) is never
+    rewritten.
+    """
+    signal = _codex_cli_signal_line(line.rstrip("\r\n"))
+    if signal is None:
+        return line
+    if _VALUE_BEARING_AUTH_RE.search(signal):
+        return _AUTH_LOGS_REDACTED_MARKER + ("\n" if line.endswith("\n") else "")
+    new_line = line
+    for value in values:
+        if value in new_line:
+            new_line = new_line.replace(value, "[redacted]")
+    return new_line
+
+
+def _stream_sanitized_log(stream, log_file, values: list[str]) -> None:
+    """Copy child output into the persisted log, sanitizing each line
+    before it is written and flushed (daemon reader thread)."""
+    try:
+        for line in stream:
+            log_file.write(_sanitize_log_line(line, values))
+            log_file.flush()
+    except Exception:
+        pass
+
+
+# Bounded settle before escalating an owned pipeline whose reader is still
+# alive after the leader's exit: descendants may still hold the pipe.
+_PIPE_SETTLE_SECONDS = 2.0
+
+# The driver runs one owned pipeline at a time (phases are sequential).
+# The handle is kept through finalization so cleanup can reach the owned
+# group even from interruption paths that do not carry the Popen object.
+_ACTIVE_OWNED_PROC: "Optional[subprocess.Popen]" = None
+
+
+def _get_active_owned_proc() -> "Optional[subprocess.Popen]":
+    """The owned process handle for the pipeline currently finalizing."""
+    return _ACTIVE_OWNED_PROC
+
+
+def _clear_active_owned_proc(proc: "Optional[subprocess.Popen]" = None) -> None:
+    """Drop the owned-pipeline handle (only if it still names *proc*)."""
+    global _ACTIVE_OWNED_PROC
+    if proc is None or _ACTIVE_OWNED_PROC is proc:
+        _ACTIVE_OWNED_PROC = None
+
+
+def _drain_pipe_reader(
+    reader: "Optional[threading.Thread]", stream_stdout,
+) -> None:
+    """Complete owned-pipeline finalization: reader finished, stream closed.
+
+    1. Bounded settle: join the reader; a reader still alive after the
+       leader's exit means owned writers (same-group descendants) still
+       hold the pipe.
+    2. Complete bounded owned-group cleanup through the retained ownership
+       handle (TERM, escalate to KILL) so the pipe reaches EOF. An
+       interruption during the settle makes the reader's thread-liveness
+       state unreliable (CPython marks the interrupted join as stopped),
+       so group cleanup then runs unconditionally.
+    3. Prove the reader is finished and close its stream — before
+       returning or propagating an interruption (a timed join with a
+       skipped close is not successful finalization).
+    """
+    interrupted = None
+    if reader is not None:
+        try:
+            reader.join(timeout=_PIPE_SETTLE_SECONDS)
+        except BaseException as exc:
+            interrupted = exc
+    reader_live = False
+    if reader is not None:
+        try:
+            reader_live = reader.is_alive()
+        except Exception:
+            reader_live = True
+    if reader is not None and (reader_live or interrupted is not None):
+        # Owned writers still hold the pipe (or the interrupted join left
+        # the reader's liveness tracking unusable): finish group cleanup
+        # first so the pipe reaches EOF.
+        proc = _get_active_owned_proc()
+        try:
+            if proc is not None:
+                _terminate_process_tree(proc, grace_s=10)
+        except BaseException as exc:
+            if interrupted is None:
+                interrupted = exc
+        try:
+            reader.join(timeout=10.0)
+        except BaseException as exc:
+            if interrupted is None:
+                interrupted = exc
+    if stream_stdout is not None and not getattr(stream_stdout, "closed", False):
+        try:
+            stream_stdout.close()
+        except BaseException as exc:
+            if interrupted is None:
+                interrupted = exc
+    if reader is not None and reader.is_alive():
+        # The owned group is gone by contract, so only buffered data
+        # remains; give the reader one last bounded grace so no live
+        # reader is ever left behind.
+        try:
+            reader.join(timeout=5.0)
+        except BaseException as exc:
+            if interrupted is None:
+                interrupted = exc
+    if interrupted is not None:
+        raise interrupted
+
+
+def _looks_like_native_id_token(value: object) -> bool:
+    """Structurally mirror the native ID-token decode contract.
+
+    The pinned Codex loader accepts `header.payload.signature` (three
+    non-empty base64url segments whose payload decodes to a JSON claims
+    object) and rejects anything else with "invalid ID token format".
+    Matching that contract lets the preflight refuse records the native
+    loader would refuse, without treating a legitimately stale session as
+    unusable (expiry is refreshed natively, never rejected on age here).
+    """
+    if not isinstance(value, str):
+        return False
+    parts = value.split(".")
+    if len(parts) != 3 or not all(parts):
+        return False
+    payload_b64 = parts[1]
+    # Strict native alphabet and length: the pinned decoder uses
+    # base64::URL_SAFE_NO_PAD, so padding and any character outside
+    # [A-Za-z0-9_-] are invalid (Python's decoder would silently ignore
+    # them — e.g. "!!!!" appended to an otherwise valid payload segment).
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", payload_b64):
+        return False
+    if len(payload_b64) % 4 == 1:
+        return False
+    try:
+        raw = base64.urlsafe_b64decode(
+            payload_b64 + "=" * (-len(payload_b64) % 4)
+        )
+        # Canonical encoding: the native decoder rejects non-zero trailing
+        # bits, so a canonical segment must round-trip when re-encoded.
+        if base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != payload_b64:
+            return False
+        decoded = _json_dupsafe(raw.decode("utf-8"))
+    except Exception:
+        return False
+    if not isinstance(decoded, dict):
+        return False
+    # Known claim shapes must match what the native IdClaims struct parses
+    # (a wrong-typed known claim fails the native load).
+    return _native_claims_usable(decoded)
+
+
+def _codex_tokens_usable(tokens: object) -> bool:
+    """Check a tokens object against the native TokenData structure.
+
+    `access_token` / `refresh_token` must be non-empty strings and
+    `id_token` must be a structurally native-loadable JWT; `account_id`,
+    when present, must be a string or null (native types it as
+    Option<String> — anything else fails the whole auth-store load).
+    Token age is intentionally NOT checked — Codex refreshes stale
+    sessions itself, and age alone is not unusability. Duplicate keys are
+    rejected like the native serde derive (repeated known fields fail with
+    "duplicate field").
+    """
+    if not isinstance(tokens, dict):
+        return False
+    if _has_duplicate_known_fields(
+        tokens, ("id_token", "access_token", "refresh_token", "account_id"),
+    ):
+        return False
+    for field in ("access_token", "refresh_token"):
+        occurrences = _field_occurrences(tokens, field)
+        if not occurrences:
+            return False
+        for value in occurrences:
+            if not isinstance(value, str) or not value.strip():
+                return False
+    for account_id in _field_occurrences(tokens, "account_id"):
+        if account_id is not None and not isinstance(account_id, str):
+            return False
+    id_tokens = _field_occurrences(tokens, "id_token")
+    if not id_tokens:
+        return False
+    return all(_looks_like_native_id_token(value) for value in id_tokens)
+
+
+def _codex_auth_record() -> "dict[str, object] | None":
+    """Return the Codex auth record when it is a usable ChatGPT session.
+
+    Mode resolution mirrors the pinned native loader (`resolved_mode`): an
+    explicit `auth_mode` wins; a missing or null mode resolves to API-key
+    when the `OPENAI_API_KEY` field is present-and-not-null
+    (`Option::is_some()` semantics — an empty string still counts) and to
+    ChatGPT otherwise. Wrong-typed native fields (`auth_mode`,
+    `OPENAI_API_KEY`, `last_refresh`, `agent_identity`, token shapes) make
+    the whole record unusable and are refused, occurrence-by-occurrence —
+    duplicates of any native-known field are rejected like the native serde
+    derive ("duplicate field" for repeated fields, regardless of values),
+    and wrong-typed occurrences fail like the native type checks. Only the
+    ChatGPT resolution is accepted (subscription-only policy): API-mode and
+    non-token records are rejected, and the operator file is never
+    rewritten. The record must also be structurally usable (tokens with a
+    native-loadable id_token) so a mode-only or malformed record fails the
+    preflight clearly instead of failing deep inside a phase.
+    """
+    auth_path = _codex_home_dir() / "auth.json"
+    if not auth_path.exists():
+        return None
+    try:
+        data = _json_dupsafe(auth_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    if _has_duplicate_known_fields(
+        data,
+        ("auth_mode", "OPENAI_API_KEY", "tokens", "last_refresh",
+         "agent_identity"),
+    ):
+        return None
+    for mode_value in _field_occurrences(data, "auth_mode"):
+        if mode_value is None:
+            continue
+        if not isinstance(mode_value, str) or mode_value not in _KNOWN_AUTH_MODES:
+            # Native serde rejects a wrong-typed or unknown auth_mode.
+            return None
+    for api_value in _field_occurrences(data, "OPENAI_API_KEY"):
+        if api_value is not None and not isinstance(api_value, str):
+            # Native serde rejects a wrong-typed API-key field outright.
+            return None
+    for refresh_value in _field_occurrences(data, "last_refresh"):
+        if refresh_value is None:
+            continue
+        if not isinstance(refresh_value, str):
+            # Native serde parses last_refresh as a timestamp; a
+            # non-string, non-null value fails the load.
+            return None
+        if not _looks_like_rfc3339_timestamp(refresh_value):
+            # Native chrono rejects malformed/out-of-range timestamps
+            # ("input contains invalid characters" / "input is out of
+            # range"). Age is NOT a rejection criterion — native refresh
+            # handles legitimately stale sessions.
+            return None
+    for identity in _field_occurrences(data, "agent_identity"):
+        # Native types agent_identity as Option<String>.
+        if identity is not None and not isinstance(identity, str):
+            return None
+    for tokens_value in _field_occurrences(data, "tokens"):
+        if tokens_value is None:
+            continue
+        if not _codex_tokens_usable(tokens_value):
+            return None
+    # Semantic resolution uses the final (last) occurrence, matching the
+    # native struct state after its in-order validation scan.
+    mode = data.get("auth_mode")
+    api_key = data.get("OPENAI_API_KEY")
+    if mode is None:
+        # Native legacy resolution mirrors Option::is_some() — an empty
+        # string is still present and wins over tokens; only absent or
+        # null falls through to ChatGPT.
+        mode = "apikey" if api_key is not None else "chatgpt"
+    if mode != "chatgpt":
+        return None
+    if not _codex_tokens_usable(data.get("tokens")):
+        return None
+    return data
+
+
+def _codex_auth_available() -> bool:
+    """Check that ChatGPT-subscription OAuth is available for `codex exec`.
+
+    Subscription-only policy: API-key environment variables
+    (`CODEX_API_KEY` / `OPENAI_API_KEY`) are NOT an accepted authentication
+    source for Plamen audits. `codex exec` gives `CODEX_API_KEY` precedence
+    over any stored OAuth session, so an inherited key must fail this
+    preflight — and is scrubbed from the phase environment below — instead
+    of silently switching the audit to API-key billing.
+
+    Without usable auth, `codex exec` sends unauthenticated provider
+    requests and fails with retry/401 noise (or attempts interactive login
+    under a TTY), so this preflight fails the phase clearly and early.
+    """
+    return _codex_auth_record() is not None
 
 
 def _codex_auth_is_chatgpt() -> bool:
-    """Return True if Codex is authenticated via ChatGPT OAuth (not API key).
+    """Return True when the Codex auth store holds a usable ChatGPT session.
 
-    ChatGPT-auth accounts cannot use `--model` flag — the server rejects ALL
-    explicit model names with "not supported when using Codex with a ChatGPT
-    account". The account's subscription tier determines the default model
-    automatically (Pro → GPT-5, Plus → GPT-4.1, etc).
+    Mirrors the pinned native resolved-mode semantics (a legacy record
+    without an explicit `auth_mode` resolves to ChatGPT when OAuth tokens
+    are present and no API key field is), then applies the structural token
+    checks. API-key environment variables are not consulted
+    (subscription-only policy).
     """
-    if os.environ.get("CODEX_API_KEY") or os.environ.get("OPENAI_API_KEY"):
-        return False
-    auth_path = Path.home() / ".codex" / "auth.json"
-    if not auth_path.exists():
-        return False
-    try:
-        data = json.loads(auth_path.read_text(encoding="utf-8"))
-        return data.get("auth_mode") == "chatgpt"
-    except Exception:
-        return False
+    return _codex_auth_record() is not None
+
+
+# Subscription-only policy for every `codex exec` phase invocation.
+#
+# Both builders pass `--ignore-user-config`, so `$CODEX_HOME/config.toml`
+# is not loaded for phase runs; the restriction must ride on the command
+# line. `forced_login_method="chatgpt"` makes `codex exec` refuse (and log
+# out) any API-key auth instead of falling back to it;
+# `cli_auth_credentials_store="file"` pins the credential backend to the
+# reviewed single-file store.
+_CODEX_SUBSCRIPTION_ONLY_ARGS = [
+    "-c", 'forced_login_method="chatgpt"',
+    "-c", 'cli_auth_credentials_store="file"',
+]
+
+
+def _phase_subprocess_env(scratchpad: Path) -> dict[str, str]:
+    """Build the environment for a phase subprocess (claude or codex).
+
+    Subscription-only policy: inherited `CODEX_API_KEY` / `OPENAI_API_KEY`
+    must never reach a Codex phase. Inside `codex exec`, `CODEX_API_KEY`
+    takes precedence over the stored ChatGPT session — it would silently
+    select API-key billing, and under a forced ChatGPT login the violation
+    even deletes the shared auth file. Scrub both names unconditionally.
+    """
+    env = {
+        **os.environ,
+        "ANTHROPIC_DISABLE_AUTOUPDATE": "1",
+        # Protect nested Claude Code alias resolution too: if a prompt or
+        # Task uses bare `opus`, keep it on the pinned Opus version.
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": PLAMEN_OPUS_MODEL,
+        "PLAMEN_SCRATCHPAD": str(scratchpad),
+    }
+    for name in ("CODEX_API_KEY", "OPENAI_API_KEY"):
+        env.pop(name, None)
+    return env
 
 
 def _build_codex_cmd(effective_model: str, *, needs_mcp: bool = False,
@@ -673,6 +1311,7 @@ def _build_codex_cmd(effective_model: str, *, needs_mcp: bool = False,
         "--ignore-user-config",
         "--ignore-rules",
     ])
+    cmd.extend(_CODEX_SUBSCRIPTION_ONLY_ARGS)
     if writable_dirs:
         for d in writable_dirs:
             cmd.extend(["--add-dir", d])
@@ -690,10 +1329,12 @@ def _detect_codex_model_rejection(log_path: Path) -> bool:
     ChatGPT-auth accounts may reject explicit --model depending on plan state
     or token freshness. When detected, the driver retries without --model,
     letting the subscription tier determine the default model automatically.
+
+    Signal-scoped: only CLI diagnostics and error/turn.failed payloads are
+    matched, so audit text quoting the message cannot trigger a retry.
     """
-    try:
-        text = log_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    text = _codex_cli_signal_text(log_path)
+    if not text:
         return False
     return "not supported when using Codex with a ChatGPT account" in text
 
@@ -706,10 +1347,12 @@ def _detect_codex_model_not_available(log_path: Path) -> bool:
     denied" that is distinct from a credential failure. This must be checked
     BEFORE _detect_codex_auth_error, which would otherwise misclassify it as
     a permanent auth failure instead of a recoverable model-downgrade scenario.
+
+    Signal-scoped (see _codex_cli_signal_line): audit/tool content quoting
+    model errors must not mask — or fake — competing decisions.
     """
-    try:
-        text = log_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    text = _codex_cli_signal_text(log_path)
+    if not text:
         return False
     return bool(re.search(
         r"(?:model.*(?:not\s+found|does\s+not\s+exist|not\s+available)"
@@ -724,10 +1367,11 @@ def _detect_codex_model_not_available(log_path: Path) -> bool:
 
 
 def _detect_codex_model_capacity(log_path: Path) -> bool:
-    """Detect transient Codex/OpenAI selected-model capacity failures."""
-    try:
-        text = log_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    """Detect transient Codex/OpenAI selected-model capacity failures.
+
+    Signal-scoped: audit/tool content cannot fake a capacity fallback."""
+    text = _codex_cli_signal_text(log_path)
+    if not text:
         return False
     return bool(re.search(
         r"(?:selected\s+model\s+is\s+at\s+capacity|model\s+is\s+at\s+capacity)",
@@ -762,6 +1406,7 @@ def _build_codex_cmd_no_model(*, needs_mcp: bool = False,
         "--skip-git-repo-check",
         "--ignore-user-config",
         "--ignore-rules",
+        *_CODEX_SUBSCRIPTION_ONLY_ARGS,
     ]
     if writable_dirs:
         for d in writable_dirs:
@@ -796,6 +1441,20 @@ def _detect_codex_auth_error(log_path: Path) -> bool:
     Auth errors (401/403, token expiry) should NOT trigger rate-limit pause
     logic — they need re-authentication, not backoff.
 
+    Native auth-store structure failures ("invalid ID token format",
+    missing token fields, "Token data is not available") are permanent
+    credential failures too, not retryable phase failures — as are serde/
+    base64 load errors (position-anchored "invalid type/value: ... at line
+    N column M", "Invalid symbol N, offset M", "input contains invalid
+    characters ...", the driver's own redacted load-error marker) and the
+    forced-login violation ("ChatGPT login is required, but an API key is
+    currently being used").
+
+    Only CLI-signal lines are classified (raw diagnostics and error/
+    turn.failed event payloads): audit/tool content inside `item.*` events
+    — agent messages or command output that merely quote native-shaped
+    diagnostics — must never trigger a permanent-auth abort.
+
     IMPORTANT: Call _detect_codex_model_not_available BEFORE this function.
     Model-not-available (404/403 for missing model access) would otherwise
     match the 401/403 patterns here and cause a permanent halt instead of
@@ -805,16 +1464,39 @@ def _detect_codex_auth_error(log_path: Path) -> bool:
         text = log_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
-    # Exclude model/capacity/rate-limit patterns from auth classification.
+    if not text:
+        return False
     # Codex JSON logs include the full audit prompt and model transcript, so
-    # words like "Unauthorized" commonly appear as vulnerability text. Auth
-    # matching must be anchored to actual provider/CLI error fields.
+    # words like "Unauthorized" commonly appear as vulnerability text — and
+    # `item.*` events carry it verbatim. Classify only CLI-signal lines:
+    # raw diagnostics and error/turn.failed event payloads (see
+    # _codex_cli_signal_line). Both the auth matching AND the competing
+    # exclusions below use this scoped text, so an audit item quoting
+    # quota/model text can neither mask a real auth failure nor fake one.
+    text = _codex_cli_signal_text(log_path)
+    if not text:
+        return False
+    # Exclude model/capacity/rate-limit patterns from auth classification.
     if _detect_codex_model_not_available(log_path) or _CODEX_RATE_LIMIT_RE.search(text):
         return False
     return bool(re.search(
         r"(?:status[=:\s]+401|HTTP\s+401"
         r"|(?:\"(?:type|code|message)\"\s*:\s*\"[^\"]*(?:unauthorized|invalid_api_key|authentication|auth)[^\"]*\")"
-        r"|(?:error|api error|provider error|codex error)[^\r\n]{0,160}(?:unauthorized|invalid_api_key|token[^\r\n]{0,40}expired|authentication[^\r\n]{0,40}failed|auth[^\r\n]{0,40}error))",
+        r"|(?:error|api error|provider error|codex error)[^\r\n]{0,160}(?:unauthorized|invalid_api_key|token[^\r\n]{0,40}expired|authentication[^\r\n]{0,40}failed|auth[^\r\n]{0,40}error)"
+        r"|(?:invalid\s+id[_ ]token(?:\s+format)?)"
+        r"|(?:missing\s+field[^\r\n]{0,24}id_token)"
+        r"|(?:token\s+data\s+is\s+not\s+available)"
+        r"|(?:invalid\s+(?:type|length|value):[^\r\n]{0,80}at\s+line\s+\d+\s+column\s+\d+)"
+        r"|(?:missing\s+field[^\r\n]{0,60}at\s+line\s+\d+\s+column\s+\d+)"
+        r"|(?:(?:eof\s+while\s+parsing|expected\s+value|trailing\s+characters|key\s+must\s+be\s+a\s+string)[^\r\n]{0,60}at\s+line\s+\d+\s+column\s+\d+)"
+        r"|(?:invalid\s+(?:symbol|last\s+symbol)\s+\d+,\s*offset\s+\d+)"
+        r"|(?:invalid\s+input\s+length[^\r\n]{0,20}\d+)"
+        r"|(?:input\s+contains\s+invalid\s+characters[^\r\n]{0,60}at\s+line\s+\d+\s+column\s+\d+)"
+        r"|(?:input\s+is\s+out\s+of\s+range[^\r\n]{0,60}at\s+line\s+\d+\s+column\s+\d+)"
+        r"|(?:duplicate\s+field[^\r\n]{0,60}at\s+line\s+\d+\s+column\s+\d+)"
+        r"|(?:invalid\s+number[^\r\n]{0,60}at\s+line\s+\d+\s+column\s+\d+)"
+        r"|(?:auth[\s-]store\s+load\s+error)"
+        r"|(?:chatgpt\s+login\s+is\s+required[^\r\n]{0,80}api\s+key))",
         text, re.IGNORECASE,
     ))
 
@@ -826,10 +1508,13 @@ def _detect_codex_rate_limit(log_path: Path, returncode: int) -> bool:
     usage_limit_reached in the event stream with rc=0 (graceful stop).
 
     Returns False for auth errors (401) — those need re-auth, not backoff.
+
+    Signal-scoped (see _codex_cli_signal_line): an audit item quoting
+    `usage_limit_reached` must neither mask a real auth failure nor be
+    reported as a rate limit itself.
     """
-    try:
-        text = log_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    text = _codex_cli_signal_text(log_path)
+    if not text:
         return False
     # Auth errors are NOT rate limits — discriminate early
     if _detect_codex_auth_error(log_path):
@@ -906,6 +1591,22 @@ def _precreate_codex_artifacts(phase: "Phase", scratchpad: Path) -> None:
                     target.write_text("", encoding="utf-8")
                 except OSError:
                     pass
+
+
+def _precreate_codex_recovery_artifacts(
+    missing: list[tuple[str, dict]], scratchpad: Path,
+) -> None:
+    """Seed empty verify_<ID>.md targets for Codex's apply_patch (see
+    _precreate_codex_artifacts). Existing files are left untouched; a
+    recovery shard that still fails to fill a target leaves it below the
+    100-byte presence threshold, so downstream stubbing is unaffected."""
+    for fid, _row in missing:
+        target = scratchpad / f"verify_{fid}.md"
+        if not target.exists():
+            try:
+                target.write_text("", encoding="utf-8")
+            except OSError:
+                pass
 
 
 def _synthesize_depth_lifecycle_artifacts(
@@ -1074,10 +1775,90 @@ def _parse_codex_output(log_path: Path, model: str = "") -> dict:
 
 # ── Process management ────────────────────────────────────────────────────
 
-def _terminate_process_tree(proc: subprocess.Popen, grace_s: float = 5.0) -> None:
-    """Terminate a phase subprocess and its children best-effort."""
-    if proc.poll() is not None:
-        return
+def _mark_owned_child(proc: subprocess.Popen, popen_kwargs: dict) -> None:
+    """Record that *proc* leads its own process group (start_new_session).
+
+    Cleanup then proves *group* completion — a same-group descendant can
+    outlive the leader and keep inherited pipes open, so the leader's exit
+    alone is never tree-completion evidence. The handle is also kept for
+    the silent-finalization paths (see `_drain_pipe_reader`)."""
+    global _ACTIVE_OWNED_PROC
+    if sys.platform != "win32" and popen_kwargs.get("start_new_session"):
+        proc.plamen_owned_pgid = proc.pid
+    else:
+        proc.plamen_owned_pgid = None
+    _ACTIVE_OWNED_PROC = proc
+
+
+def _owned_group_alive(pgid: int) -> bool:
+    """Bounded owned-group probe: ESRCH from killpg(0) means gone."""
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _reap_owned_leader(proc: subprocess.Popen) -> None:
+    """Bounded reaping of the owned leader — its exit is not tree evidence."""
+    try:
+        proc.wait(timeout=2.0)
+    except Exception:
+        pass
+
+
+_OWNED_KILL_GRACE_S = 2.0
+
+
+def _shutdown_single_process(proc: subprocess.Popen, grace_s: float) -> bool:
+    """One bounded single-process shutdown pass.
+
+    Unguarded on purpose: the caller runs the whole shutdown inside an
+    operation-level guard, recovers from interruptions and verifies the
+    final state, never an aborted attempt."""
+    try:
+        proc.terminate()
+    except Exception:
+        pass
+    try:
+        proc.wait(timeout=grace_s)
+        return True
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        proc.kill()
+    except Exception:
+        pass
+    try:
+        proc.wait(timeout=_OWNED_KILL_GRACE_S)
+    except subprocess.TimeoutExpired:
+        pass
+    return proc.poll() is not None
+
+
+def _terminate_process_tree(proc: subprocess.Popen, grace_s: float = 5.0) -> bool:
+    """Bounded owned-process cleanup; True once the whole tree is gone.
+
+    POSIX children are spawned as session/group leaders, so completion
+    means *the group is empty* — never merely the leader's exit (a
+    descendant can outlive the leader and keep the pipes open). SIGTERM
+    the group, escalate to SIGKILL while any member remains, and only
+    then report success.
+
+    Interruption-safe at the operation level: the whole shutdown sequence
+    (group selection, clock reads, deadline setup, signalling, probes,
+    reaping) runs inside one guard, so a KeyboardInterrupt raised at any
+    bytecode boundary — the TERM loop clock included — is preserved while
+    the bounded shutdown continues to completion on the *same* absolute
+    deadline (an interruption never restarts or resets the window). The
+    final state is verified directly and only then is the preserved
+    interruption re-raised; success is never inferred from an aborted
+    attempt. Windows stays a best-effort taskkill path.
+    """
+    if proc is None:
+        return True
     if sys.platform == "win32":
         try:
             subprocess.run(
@@ -1096,31 +1877,85 @@ def _terminate_process_tree(proc: subprocess.Popen, grace_s: float = 5.0) -> Non
             proc.wait(timeout=grace_s)
         except Exception:
             pass
-        return
+        return proc.poll() is not None
 
-    try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except Exception:
+    pending = None
+    pgid = None
+    term_deadline = None
+    result = False
+    attempts = 3
+    while attempts > 0:
+        attempts -= 1
+        # The whole shutdown attempt — group selection, clock reads,
+        # deadline setup, signalling, group probes and reaping — runs
+        # inside one operation-level guard. A cancellation raised at ANY
+        # bytecode boundary in here (the loop clock included) resumes the
+        # bounded shutdown on the same absolute deadline instead of
+        # aborting it.
         try:
-            proc.terminate()
-        except Exception:
-            pass
-    try:
-        proc.wait(timeout=grace_s)
-        return
-    except Exception:
-        pass
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except Exception:
+            if pgid is None:
+                pgid = getattr(proc, "plamen_owned_pgid", None)
+                if pgid is None:
+                    # Fallback: honor an actual own group if the child
+                    # leads one.
+                    try:
+                        if os.getpgid(proc.pid) == proc.pid:
+                            pgid = proc.pid
+                    except (ProcessLookupError, PermissionError, OSError):
+                        pgid = None
+            if term_deadline is None:
+                term_deadline = time.monotonic() + max(0.0, grace_s)
+            if pgid is None:
+                result = _shutdown_single_process(proc, grace_s)
+            elif not _owned_group_alive(pgid):
+                _reap_owned_leader(proc)
+                result = True
+            else:
+                try:
+                    os.killpg(pgid, signal.SIGTERM)
+                except ProcessLookupError:
+                    _reap_owned_leader(proc)
+                    result = True
+                else:
+                    _reap_owned_leader(proc)
+                    kill_deadline = None
+                    while True:
+                        if not _owned_group_alive(pgid):
+                            break
+                        now = time.monotonic()
+                        if kill_deadline is None:
+                            if now >= term_deadline:
+                                try:
+                                    os.killpg(pgid, signal.SIGKILL)
+                                except ProcessLookupError:
+                                    break
+                                kill_deadline = now + _OWNED_KILL_GRACE_S
+                        elif now >= kill_deadline:
+                            break
+                        time.sleep(0.02)
+                    _reap_owned_leader(proc)
+                    result = not _owned_group_alive(pgid)
+            break
+        except BaseException as exc:
+            if pending is None:
+                pending = exc
+            result = False
+    # Never infer success from an aborted attempt: verify the actual final
+    # state directly whenever the sequence was interrupted or reported
+    # incomplete.
+    if pending is not None or not result:
         try:
-            proc.kill()
-        except Exception:
-            pass
-    try:
-        proc.wait(timeout=grace_s)
-    except Exception:
-        pass
+            if pgid is not None:
+                result = not _owned_group_alive(pgid)
+            else:
+                result = proc.poll() is not None
+        except BaseException as exc:
+            if pending is None:
+                pending = exc
+            result = False
+    if pending is not None:
+        raise pending
+    return result
 
 
 def _reconcile_completed_checkpoint_artifacts(
@@ -1553,6 +2388,88 @@ def _is_semantic_dedup_passthrough_failure(missing: list[Any]) -> bool:
     )
 
 
+def _run_recovery_attempt(
+    attempt_cmd: list[str],
+    attempt_log: Path,
+    *,
+    snap: Path,
+    project_root: str,
+    subprocess_env: dict[str, str],
+    popen_kwargs: dict[str, Any],
+    timeout: int,
+    sanitize_stream: bool = False,
+) -> bool:
+    """Spawn one recovery-shard attempt and wait for it (attempt 1/2).
+
+    Mirrors the ordinary phase spawn: snapshot file as stdin, merged
+    stdout/stderr log, session-scoped env and platform popen kwargs. With
+    `sanitize_stream` (Codex backend) the child's output is piped through
+    the per-line sanitizer before the first persisted write, so an
+    interrupted run can never leave value-bearing auth diagnostics.
+    """
+    stream_reader: Optional[threading.Thread] = None
+    stream_stdout = None
+    with attempt_log.open("w", encoding="utf-8", errors="replace") as out, \
+            snap.open("rb") as stdin_file:
+        try:
+            if sanitize_stream:
+                proc = subprocess.Popen(
+                    attempt_cmd,
+                    stdin=stdin_file, stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True, encoding="utf-8", errors="replace",
+                    cwd=project_root,
+                    env=subprocess_env,
+                    **popen_kwargs,
+                )
+                _mark_owned_child(proc, popen_kwargs)
+                stream_stdout = proc.stdout
+                stream_reader = threading.Thread(
+                    target=_stream_sanitized_log,
+                    args=(proc.stdout, out, _auth_record_string_values()),
+                    daemon=True,
+                )
+                stream_reader.start()
+            else:
+                proc = subprocess.Popen(
+                    attempt_cmd,
+                    stdin=stdin_file, stdout=out, stderr=subprocess.STDOUT,
+                    text=True, encoding="utf-8", errors="replace",
+                    cwd=project_root,
+                    env=subprocess_env,
+                    **popen_kwargs,
+                )
+                _mark_owned_child(proc, popen_kwargs)
+        except Exception as e:
+            log.warning(f"[verify_recovery] Popen failed: {e}")
+            return False
+
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _terminate_process_tree(proc, grace_s=10)
+            log.warning(f"[verify_recovery] timed out after {timeout}s")
+        except BaseException:
+            # Cancellation (SIGINT/…): stop the owned child tree first so
+            # the pipe reader reaches EOF, then propagate the cancellation.
+            _terminate_process_tree(proc, grace_s=5)
+            raise
+        finally:
+            # Owned-pipeline finalization: complete the reader/pipe cleanup
+            # (killing remaining owned writers when needed), then the
+            # bounded owned-group completion, then drop the ownership
+            # handle. This runs before returning or re-propagating an
+            # interruption — including one raised during finalization.
+            try:
+                _drain_pipe_reader(stream_reader, stream_stdout)
+            finally:
+                try:
+                    _terminate_process_tree(proc, grace_s=10)
+                finally:
+                    _clear_active_owned_proc(proc)
+    return True
+
+
 def _run_verify_recovery_shard(
     config: dict,
     missing: list[tuple[str, dict]],
@@ -1628,7 +2545,9 @@ def _run_verify_recovery_shard(
     )
     full_prompt = recovery_directive + base_prompt
 
-    # Resolve model and timeout.
+    # Resolve backend / model / timeout.
+    backend = (config.get("cli_backend") or "claude").strip().lower()
+    codex_backend = backend == "codex"
     effective_model = "sonnet"
     mode = config.get("mode", "core")
     if mode == "light":
@@ -1638,7 +2557,46 @@ def _run_verify_recovery_shard(
         mode=mode, hypothesis_count=len(missing),
     )
 
-    # Write snapshot.
+    # Subscription-only policy (KCA-727): a Codex-mode recovery shard must use
+    # the same hardened auth check, prompt translation, command builder and
+    # scrubbed environment as ordinary phases — never the Claude launcher or
+    # the inherited API credentials.
+    codex_writable: list[str] = [
+        scratchpad.as_posix(), Path(config["project_root"]).as_posix(),
+    ]
+    if codex_backend:
+        # Same model mapping ordinary phases use for the Codex backend.
+        effective_model = _resolve_codex_model_alias(effective_model)
+        if not CODEX_BIN:
+            log.error(
+                "[verify_recovery] cli_backend=codex but codex binary not "
+                "found — cannot run recovery shard"
+            )
+            return [fid for fid, _ in missing]
+        if not _codex_auth_available():
+            log.error(
+                "[verify_recovery] Codex subscription OAuth not available — "
+                "cannot run recovery shard. API-key fallback is disabled for "
+                "Plamen; verify a valid ChatGPT login at $CODEX_HOME/auth.json "
+                "(run `codex login` for the deployment Codex home)."
+            )
+            return [fid for fid, _ in missing]
+        try:
+            full_prompt = _translate_prompt_for_codex(
+                full_prompt,
+                phase_name="verify_recovery",
+                pipeline=pipeline,
+                mode=mode,
+            )
+        except RuntimeError as e:
+            log.error(f"[verify_recovery] Codex prompt translation failed: {e}")
+            return [fid for fid, _ in missing]
+        # Seed empty verify_<ID>.md targets: Codex's apply_patch cannot create
+        # new files (see _precreate_codex_artifacts).
+        _precreate_codex_recovery_artifacts(missing, scratchpad)
+
+    # Write snapshot — the child's stdin source (the translated prompt for
+    # the Codex backend).
     snap = scratchpad / "_prompt_verify_recovery.attempt1.md"
     try:
         snap.write_text(full_prompt, encoding="utf-8")
@@ -1647,45 +2605,56 @@ def _run_verify_recovery_shard(
         return [fid for fid, _ in missing]
 
     # Build subprocess command.
-    cmd = [
-        CLAUDE_BIN, "-p",
-        "--model", effective_model,
-        "--output-format", "json",
-        "--no-session-persistence",
-        "--dangerously-skip-permissions",
-        "--add-dir", config["project_root"],
-        "--add-dir", plamen_home().as_posix(),
-    ]
+    if codex_backend:
+        olm_path = str(scratchpad / "_codex_output_verify_recovery.attempt1.md")
+        if config.get("_codex_skip_model"):
+            cmd = _build_codex_cmd_no_model(
+                output_last_message=olm_path,
+                writable_dirs=codex_writable,
+            )
+        else:
+            cmd = _build_codex_cmd(
+                effective_model,
+                output_last_message=olm_path,
+                writable_dirs=codex_writable,
+            )
+    else:
+        cmd = [
+            CLAUDE_BIN, "-p",
+            "--model", effective_model,
+            "--output-format", "json",
+            "--no-session-persistence",
+            "--dangerously-skip-permissions",
+            "--add-dir", config["project_root"],
+            "--add-dir", plamen_home().as_posix(),
+        ]
 
-    # Subprocess isolation (same as run_phase).
-    isolation_path = scratchpad / "_subprocess_isolation.json"
-    isolation_ok = False
-    try:
-        isolation_payload = '{"enabledPlugins":{},"hooks":{},"mcpServers":{}}'
-        if (
-            not isolation_path.exists()
-            or isolation_path.read_text(encoding="utf-8").strip()
-            != isolation_payload
-        ):
-            isolation_path.write_text(isolation_payload, encoding="utf-8")
-        isolation_ok = True
-    except Exception:
-        pass
-    cmd.extend(["--disallowedTools", "mcp__*"])
-    if isolation_ok:
-        iso = isolation_path.as_posix()
-        cmd.extend([
-            "--settings", iso,
-            "--strict-mcp-config", "--mcp-config", iso,
-        ])
+        # Subprocess isolation (same as run_phase; Claude backend only — the
+        # Codex CLI uses --ephemeral + --ignore-user-config instead).
+        isolation_path = scratchpad / "_subprocess_isolation.json"
+        isolation_ok = False
+        try:
+            isolation_payload = '{"enabledPlugins":{},"hooks":{},"mcpServers":{}}'
+            if (
+                not isolation_path.exists()
+                or isolation_path.read_text(encoding="utf-8").strip()
+                != isolation_payload
+            ):
+                isolation_path.write_text(isolation_payload, encoding="utf-8")
+            isolation_ok = True
+        except Exception:
+            pass
+        cmd.extend(["--disallowedTools", "mcp__*"])
+        if isolation_ok:
+            iso = isolation_path.as_posix()
+            cmd.extend([
+                "--settings", iso,
+                "--strict-mcp-config", "--mcp-config", iso,
+            ])
 
-    # Subprocess env.
-    subprocess_env = {
-        **os.environ,
-        "ANTHROPIC_DISABLE_AUTOUPDATE": "1",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": PLAMEN_OPUS_MODEL,
-        "PLAMEN_SCRATCHPAD": str(scratchpad),
-    }
+    # Subprocess env — same hardened environment path for both backends
+    # (scrubs inherited CODEX_API_KEY / OPENAI_API_KEY).
+    subprocess_env = _phase_subprocess_env(scratchpad)
 
     # Platform-specific Popen kwargs.
     popen_kwargs: dict[str, Any] = {}
@@ -1702,31 +2671,57 @@ def _run_verify_recovery_shard(
 
     log.info(
         f"[verify_recovery] spawning recovery shard for {len(missing)} "
-        f"findings (timeout={timeout}s, model={effective_model})"
+        f"findings (timeout={timeout}s, model={effective_model}, "
+        f"backend={backend})"
     )
 
-    with log_path.open("w", encoding="utf-8", errors="replace") as out, \
-            snap.open("rb") as stdin_file:
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                stdin=stdin_file, stdout=out, stderr=subprocess.STDOUT,
-                text=True, encoding="utf-8", errors="replace",
-                cwd=config["project_root"],
-                env=subprocess_env,
-                **popen_kwargs,
-            )
-        except Exception as e:
-            log.warning(f"[verify_recovery] Popen failed: {e}")
-            return [fid for fid, _ in missing]
+    spawned = _run_recovery_attempt(
+        cmd, log_path, snap=snap, project_root=config["project_root"],
+        subprocess_env=subprocess_env, popen_kwargs=popen_kwargs,
+        timeout=timeout, sanitize_stream=codex_backend,
+    )
+    if not spawned:
+        return [fid for fid, _ in missing]
 
-        try:
-            proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            _terminate_process_tree(proc, grace_s=10)
-            log.warning(
-                f"[verify_recovery] timed out after {timeout}s"
-            )
+    # Codex model-retry parity with run_phase: when the subscription plan
+    # rejects explicit model names ("not supported when using Codex with a
+    # ChatGPT account"), retry once without --model.
+    if codex_backend and _detect_codex_model_rejection(log_path):
+        log.warning(
+            "[verify_recovery] Codex rejected --model flag (ChatGPT-auth "
+            "restriction). Retrying without --model."
+        )
+        retry_log = scratchpad / "_stdio_verify_recovery.attempt2.log"
+        retry_olm = str(scratchpad / "_codex_output_verify_recovery.attempt2.md")
+        retry_cmd = _build_codex_cmd_no_model(
+            output_last_message=retry_olm,
+            writable_dirs=codex_writable,
+        )
+        retried = _run_recovery_attempt(
+            retry_cmd, retry_log, snap=snap,
+            project_root=config["project_root"],
+            subprocess_env=subprocess_env, popen_kwargs=popen_kwargs,
+            timeout=timeout, sanitize_stream=codex_backend,
+        )
+        if retried:
+            log_path = retry_log
+
+    if codex_backend and _detect_codex_auth_error(log_path):
+        log.error(
+            "[verify_recovery] Codex authentication error — the recovery "
+            "shard cannot proceed with the stored credentials (401/403, "
+            "expired session or unusable auth record). Re-run `codex login` "
+            "for the deployment Codex home ($CODEX_HOME); API-key fallback "
+            "is disabled for Plamen. This is a permanent failure."
+        )
+
+    if codex_backend:
+        # Value-bearing native auth diagnostics must not persist in the
+        # recovery attempt logs either (same hygiene as ordinary phases).
+        _scrub_auth_value_diagnostics([
+            scratchpad / "_stdio_verify_recovery.attempt1.log",
+            scratchpad / "_stdio_verify_recovery.attempt2.log",
+        ])
 
     elapsed = time.monotonic() - start
     log.info(f"[verify_recovery] completed in {elapsed:.0f}s")
@@ -1908,7 +2903,9 @@ def _wait_with_heartbeat(
             pass
         except KeyboardInterrupt:
             display._clear_spinner()
-            _terminate_process_tree(proc, grace_s=10)
+            # Cancel is urgent: bounded TERM window, then group KILL —
+            # the whole owned group must be gone before this propagates.
+            _terminate_process_tree(proc, grace_s=5)
             raise
 
         # Esc halt: terminate subprocess, return -3 so driver can offer resume
@@ -2128,9 +3125,10 @@ def run_phase(phase: Phase, config: dict, attempt: int) -> int:
             return EXIT_ERROR
         if not _codex_auth_available():
             log.error(
-                f"[{phase.name}] Codex auth not found — `codex exec` will hang "
-                f"waiting for interactive login. Run `codex login` first, or set "
-                f"CODEX_API_KEY / OPENAI_API_KEY."
+                f"[{phase.name}] Codex subscription OAuth not available — "
+                f"`codex exec` cannot start. API-key fallback is disabled for "
+                f"Plamen; verify a valid ChatGPT login at $CODEX_HOME/auth.json "
+                f"(run `codex login` for the deployment Codex home)."
             )
             return EXIT_ERROR
         if not _codex_prompt_fits(prompt, effective_model):
@@ -2329,14 +3327,10 @@ def run_phase(phase: Phase, config: dict, attempt: int) -> int:
     #   doing filesystem I/O + JSON parse on every Task spawn. Saves
     #   ~100-500ms per agent dispatch on Windows; on a 20-agent depth
     #   phase that is several seconds of measurable overhead removed.
-    subprocess_env = {
-        **os.environ,
-        "ANTHROPIC_DISABLE_AUTOUPDATE": "1",
-        # Protect nested Claude Code alias resolution too: if a prompt or
-        # Task uses bare `opus`, keep it on the pinned Opus version.
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": PLAMEN_OPUS_MODEL,
-        "PLAMEN_SCRATCHPAD": str(scratchpad),
-    }
+    # Subscription-only policy: `_phase_subprocess_env` also scrubs inherited
+    # CODEX_API_KEY / OPENAI_API_KEY so a Codex phase can never select
+    # API-key billing over the stored ChatGPT session.
+    subprocess_env = _phase_subprocess_env(scratchpad)
     # On Windows, claude.cmd is a batch file; Popen without
     # CREATE_NO_WINDOW spawns a visible console per subprocess.
     popen_kwargs: dict[str, Any] = {}
@@ -2348,17 +3342,42 @@ def run_phase(phase: Phase, config: dict, attempt: int) -> int:
     else:
         popen_kwargs["start_new_session"] = True
 
+    stream_reader: Optional[threading.Thread] = None
+    stream_stdout = None
     with log_path.open("w", encoding="utf-8", errors="replace") as out, \
             snap.open("rb") as stdin_file:
         try:
-            proc = subprocess.Popen(
-                cmd,
-                stdin=stdin_file, stdout=out, stderr=subprocess.STDOUT,
-                text=True, encoding="utf-8", errors="replace",
-                cwd=config["project_root"],
-                env=subprocess_env,
-                **popen_kwargs,
-            )
+            if backend == "codex":
+                # Pipe the child's output through the per-line sanitizer so
+                # value-bearing auth diagnostics are never persisted — even
+                # when this run is interrupted before the post-run cleanup.
+                proc = subprocess.Popen(
+                    cmd,
+                    stdin=stdin_file, stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True, encoding="utf-8", errors="replace",
+                    cwd=config["project_root"],
+                    env=subprocess_env,
+                    **popen_kwargs,
+                )
+                _mark_owned_child(proc, popen_kwargs)
+                stream_stdout = proc.stdout
+                stream_reader = threading.Thread(
+                    target=_stream_sanitized_log,
+                    args=(proc.stdout, out, _auth_record_string_values()),
+                    daemon=True,
+                )
+                stream_reader.start()
+            else:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdin=stdin_file, stdout=out, stderr=subprocess.STDOUT,
+                    text=True, encoding="utf-8", errors="replace",
+                    cwd=config["project_root"],
+                    env=subprocess_env,
+                    **popen_kwargs,
+                )
+                _mark_owned_child(proc, popen_kwargs)
         except Exception as e:
             log.error(f"[{phase.name}] Popen failed: {e}")
             try:
@@ -2391,12 +3410,43 @@ def run_phase(phase: Phase, config: dict, attempt: int) -> int:
             _terminate_process_tree(proc, grace_s=10)
             log.warning(f"[{phase.name}] timed out after {timeout}s")
             rc = -2  # timeout sentinel
+        except BaseException:
+            # Cancellation (SIGINT/…): _wait_with_heartbeat already
+            # terminates the child, but keep the guarantee on every exit
+            # path, then propagate the cancellation.
+            _terminate_process_tree(proc, grace_s=5)
+            raise
+        finally:
+            # Owned-pipeline finalization: complete the reader/pipe cleanup
+            # (killing remaining owned writers when needed), then the
+            # bounded owned-group completion, then drop the ownership
+            # handle. This runs before returning or re-propagating an
+            # interruption — including one raised during finalization.
+            try:
+                _drain_pipe_reader(stream_reader, stream_stdout)
+            finally:
+                try:
+                    _terminate_process_tree(proc, grace_s=10)
+                finally:
+                    _clear_active_owned_proc(proc)
 
     # Copy to canonical so detect_rate_limit finds latest
     try:
         canonical.write_bytes(log_path.read_bytes())
     except Exception:
         pass
+
+    # Subscription-only hygiene (KCA-727): value-bearing native auth
+    # diagnostics (serde type/value errors echo the offending record
+    # value) must not persist in the attempt or canonical logs. Scrubbed
+    # lines are replaced with a marker that stays classifiable for the
+    # permanent-auth handling downstream.
+    if backend == "codex":
+        _scrub_auth_value_diagnostics(
+            [canonical] + sorted(
+                scratchpad.glob(f"_stdio_{phase.name}.attempt*.log")
+            )
+        )
 
     duration = time.time() - start
     log.info(f"[{phase.name}] subprocess exited rc={rc} after {duration:.0f}s")
@@ -3509,6 +4559,37 @@ def _purge_scratchpad(scratchpad: Path, config: dict) -> None:
             pass
 
 
+# K3 deployment delta (KCA-727): the phase budgets in this revision
+# (notably `breadth` at 10800s for SC and L1) exceed the 2-hour ceiling
+# enforced by `validate_phase_graph`, which aborts every run at startup
+# with EXIT_DEGRADED. The accepted K3 deployment clamps the in-flight
+# phase objects to 2 hours (same semantics as the removed
+# `k3-plamen-runner` launcher clamp); the phase sequencer, artifacts and
+# gates are unchanged.
+# Removal condition: re-pin to a revision where the validator accepts the
+# configured phase budgets (later upstream revisions raise the bound to
+# 4 hours) and the deployment re-approves the longer per-phase allowance.
+_PHASE_TIMEOUT_CEILING_S = 7200
+
+
+def clamp_phase_timeouts(
+    ceiling: int = _PHASE_TIMEOUT_CEILING_S,
+) -> list[tuple[str, int, int]]:
+    """Clamp per-phase `base_timeout_s` to *ceiling* (K3 deployment delta).
+
+    Returns the (phase_name, previous_timeout, clamped_timeout) adjustments
+    so callers and tests can report exactly what changed.
+    """
+    adjusted: list[tuple[str, int, int]] = []
+    for phases in (SC_PHASES, L1_PHASES):
+        for phase in phases:
+            timeout = getattr(phase, "base_timeout_s", 0)
+            if isinstance(timeout, (int, float)) and timeout > ceiling:
+                phase.base_timeout_s = ceiling
+                adjusted.append((getattr(phase, "name", "?"), int(timeout), ceiling))
+    return adjusted
+
+
 def main():
     # Terminal: WARNING+ only (keep TUI clean).
     # File: everything (INFO+) for debugging via `tail -f _plamen.log`.
@@ -3646,6 +4727,10 @@ def main():
 
     phases = L1_PHASES if config["pipeline"] == "l1" else SC_PHASES
     mode = config["mode"]
+
+    # K3 deployment delta (KCA-727): clamp per-phase budgets to the reviewed
+    # 2-hour per-phase ceiling before validation (see clamp_phase_timeouts).
+    clamp_phase_timeouts()
 
     # Phase-graph startup validation. Closes the architectural defect where a
     # mode/language combination could ship a broken phase list (duplicate
@@ -5116,9 +6201,10 @@ def main():
             if _detect_codex_auth_error(_stdio_crash_log):
                 log.error(
                     f"[{phase.name}] Codex authentication error (401/403 or "
-                    f"expired token). Re-run `codex login` or refresh "
-                    f"CODEX_API_KEY / OPENAI_API_KEY. This is a permanent "
-                    f"failure — retrying with stale credentials is pointless."
+                    f"expired token). Re-run `codex login` for the deployment "
+                    f"Codex home ($CODEX_HOME); API-key fallback is disabled "
+                    f"for Plamen. This is a permanent failure — retrying with "
+                    f"stale credentials is pointless."
                 )
                 checkpoint.save(scratchpad)
                 sys.exit(EXIT_ERROR)
